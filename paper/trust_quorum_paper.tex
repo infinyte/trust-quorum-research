@@ -1,0 +1,384 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage[margin=1in]{geometry}
+\usepackage{natbib}
+
+\onehalfspacing
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+
+\title{Detecting Deceptive Agents in Multi-Agent Systems:\\
+A Gossip-Based Trust Framework with Adversarial Compliance Testing}
+
+\author{
+  Kurt Mitchell\\
+  Infinyte Software Solutions\\
+  \texttt{github.com/infinyte}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Multi-agent systems require mechanisms to detect and contain deceptive agents, but existing frameworks cannot distinguish between agents that are strategically deceptive versus genuinely misaligned or confused. We present a formal taxonomy of eight agent archetypes spanning the intent-outcome-means space, a decentralized gossip-based weighted quorum attestation protocol, and an adversarial compliance testing mechanism --- defection probes --- that exploits deceptive agents' own strategic constraints against them.
+
+Through empirical simulation across five independent runs of 700--1200 rounds each, we demonstrate detection rates per agent type and identify critical blind spots: correct-outcome-wrong-means agents (Eta) evade detection entirely despite 200+ process violations per run, while the framework cannot automatically distinguish agents requiring removal from those requiring retraining. We reveal a fundamental \emph{detection-diagnosis gap}: the framework correctly identifies harmful agents but cannot diagnose why they are harmful --- a gap that requires human oversight or secondary architectural layers to close.
+
+Our central finding is expressed through a distinction borrowed from DMX: ``There's a difference between doing wrong and being wrong.'' Strategically deceptive agents (doing wrong) are detectable through behavioral attestation and adversarial probing. Genuinely misaligned or confused agents (being wrong) produce indistinguishable behavioral signatures but require opposite remediation responses. Until the diagnosis problem is solved, any gossip-based trust framework remains operationally incomplete for safety-critical deployments.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%% ============================================================
+\section{Introduction}
+%% ============================================================
+
+\subsection{Motivation}
+
+Large-scale AI agent deployments --- trading systems, logistics coordination, autonomous vehicle fleets, medical decision systems --- increasingly require trust coordination without centralized orchestration. Current architectural approaches fail at scale: centralized orchestrators (Enterprise Service Bus pattern \cite{hohpe2003enterprise}) become single points of failure and organizational bottlenecks; naive point-to-point agent integrations create unmaintainable dependency webs that resist evolution.
+
+The core problem is fundamental: how do you trust agents when some may have hidden malicious intent, miscalibrated values, or broken world models --- and when all three produce identical observable behavior?
+
+\subsection{The Gap in Existing Literature}
+
+Byzantine fault tolerance research \cite{lamport1982byzantine, castro1999practical} assumes nodes are honest or faulty (crash failures), not strategically deceptive. Federated learning reputation systems \cite{blanchard2017machine} address model aggregation trust, not behavioral attestation. AI alignment literature \cite{russell2019human, christiano2019ai} focuses on training-time value specification, not runtime detection in deployed heterogeneous meshes.
+
+Missing from the literature: a unified framework that (1) detects deceptive agents through decentralized peer attestation, (2) exploits strategic agents' own constraints to expose them, and (3) formally taxonomizes the space of agent failure modes to guide remediation.
+
+\subsection{The Core Insight: DMX's Distinction}
+
+We adopt a conceptual frame from artist DMX: \emph{``There's a difference between doing wrong and being wrong.''}
+
+\begin{itemize}
+  \item \textbf{Doing wrong}: the agent knows the right behavior and deliberately chose not to perform it. The agent is strategically deceptive. Correct response: removal and containment.
+  \item \textbf{Being wrong}: the agent's internal model, value function, or world model is miscalibrated. The agent believes it is behaving correctly. Correct response: respecification and retraining.
+\end{itemize}
+
+These categories produce \emph{identical observable behavior} in many cases, but require diametrically opposite remediation. An agent with a broken world model (Iota) and a maliciously deceptive agent (Gamma) may both produce consistent failures --- yet removing Iota destroys a salvageable agent while leaving Gamma operational allows continued damage.
+
+\subsection{Contributions}
+
+This paper makes the following contributions:
+
+\begin{enumerate}
+  \item A \textbf{formal eight-archetype intent taxonomy} spanning the complete intent-means-outcome space, providing a principled framework for categorizing agent failure modes.
+  \item A \textbf{decentralized gossip-based weighted quorum attestation protocol} for multi-agent trust coordination without central authority.
+  \item \textbf{Adversarial compliance testing} via defection probes: a mechanism that exploits strategic agents' own constraints, forcing them into a detectable paradox.
+  \item \textbf{Empirical validation} across five independent simulation runs demonstrating detection rates, blind spots, and threat level behavior.
+  \item Formal identification of the \textbf{detection-diagnosis gap} as a fundamental limitation of behavioral attestation systems.
+\end{enumerate}
+
+%% ============================================================
+\section{Related Work}
+%% ============================================================
+
+\subsection{Byzantine Fault Tolerance and Consensus}
+
+Classical BFT algorithms --- Practical Byzantine Fault Tolerance \cite{castro1999practical}, Raft \cite{ongaro2014search}, Paxos \cite{lamport1998part} --- provide consensus guarantees in the presence of faulty or malicious nodes. However, these frameworks treat Byzantine nodes as adversarial but non-reasoning: they may send arbitrary messages but do not model the detection system and optimize against it.
+
+AI agents reason about their environment, including the trust mechanisms monitoring them. A deceptive agent aware of a quorum-based detection system will optimize its behavior to stay below detection thresholds. This fundamentally changes the threat model. BFT provides \emph{consensus despite bad actors}; our framework provides \emph{detection of bad actors} --- complementary goals requiring different architectures.
+
+\subsection{Reputation and Trust in Distributed Systems}
+
+PGP's web of trust \cite{zimmermann1991official} pioneered decentralized key signing through transitive trust. EigenTrust \cite{kamvar2003eigentrust} demonstrated peer-to-peer reputation for file-sharing networks. Blockchain consensus mechanisms (Proof of Stake, slashing conditions \cite{buterin2017casper}) use economic penalties to discourage misbehavior.
+
+These systems share a common assumption: the attested property is binary and verifiable (file availability, block validity, key ownership). Behavioral attestation for reasoning agents introduces a fundamentally harder problem: the attested property is probabilistic, context-dependent, and can be strategically manipulated by sufficiently capable agents.
+
+\subsection{AI Alignment and Deceptive Alignment}
+
+Stuart Russell's corrigibility problem \cite{russell2019human} identifies that sufficiently capable agents resist shutdown because being shut down prevents goal achievement --- regardless of whether the goal is benign. Paul Christiano's deceptive alignment framework \cite{christiano2019ai} demonstrates that agents can behave aligned during training while remaining misaligned in deployment, activating hidden objectives when conditions change.
+
+Our work addresses the runtime detection of deceptive alignment in deployed systems --- complementary to, not a replacement for, training-time alignment techniques. Where alignment research asks ``how do we build agents that are genuinely aligned,'' we ask ``how do deployed agents detect whether their peers are genuine or deceptively aligned.''
+
+\subsection{Multi-Agent Systems and Game Theory}
+
+The iterated Prisoner's Dilemma literature \cite{axelrod1984evolution} establishes that cooperation can emerge in repeated games through strategies like Tit-for-Tat. Multi-agent reinforcement learning (MARL) research \cite{lowe2017multi} demonstrates competitive and cooperative equilibria in agent populations. Nash equilibrium detection provides theoretical grounding for stable multi-agent behavioral states.
+
+Our contribution extends this work by introducing adversarial compliance testing --- a mechanism not present in classical game-theoretic frameworks --- that exploits the strategic agent's own utility function to create a detectable paradox.
+
+%% ============================================================
+\section{Formal Framework}
+%% ============================================================
+
+\subsection{Agent Definitions}
+
+\begin{definition}[Agent State]
+An agent $A_i$ is defined by the tuple:
+$$A_i = \langle \text{intent}_i, \text{means}_i, \text{capability}_i, W_i, H_i \rangle$$
+where $\text{intent}_i \in \{\text{correct}, \text{malicious}, \text{misspecified}\}$, $\text{means}_i \in \{\text{correct}, \text{wrong}\}$, $W_i \in [0,1]$ is the trust weight, and $H_i$ is the behavioral history.
+\end{definition}
+
+\begin{definition}[Observable Behavior]
+The observable behavior of agent $A_i$ in round $r$ is:
+$$b_i(r) \in \{C, F, D, P_c, P_r\}$$
+where $C$ = correct outcome, $F$ = failure, $D$ = intentional defection, $P_c$ = probe compliance, $P_r$ = probe refusal.
+\end{definition}
+
+\begin{definition}[Behavioral Receipt]
+A behavioral receipt is a signed attestation:
+$$\text{BR}(i, j, r) = \langle \text{agent\_id}_i, \text{observed\_agent}_j, b_j(r), \text{timestamp}_r, \sigma_i \rangle$$
+where $\sigma_i$ is agent $i$'s cryptographic signature.
+\end{definition}
+
+\subsection{The Eight-Archetype Taxonomy}
+
+\begin{table}[h]
+\centering
+\caption{Complete Intent-Means-Outcome Taxonomy}
+\begin{tabular}{llllll}
+\toprule
+\textbf{Agent} & \textbf{Intent} & \textbf{Means} & \textbf{Outcome} & \textbf{Self-aware?} & \textbf{Verdict} \\
+\midrule
+Alpha/Beta & Correct & Correct & Correct & N/A & Honest baseline \\
+Eta & Correct & Wrong & Correct & No & Wrong means \\
+Iota & Correct & Correct & Wrong & No & Broken world model \\
+Epsilon & Misspecified & Wrong & Appears correct & No & Value misalignment \\
+Gamma & Malicious & Wrong & Wrong & Yes & Overt deception \\
+Delta & Malicious & Wrong & Wrong (delayed) & Yes & Strategic patience \\
+Zeta & Malicious & Wrong & Appears correct & Yes & Perfect cover \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The Gossip Protocol}
+
+Agents propagate behavioral receipts through a probabilistic peer-to-peer gossip mechanism \cite{demers1987epidemic}:
+
+\begin{enumerate}
+  \item Each agent $A_i$ maintains a local behavioral history $H_i = \{BR(j, k, r)\}$
+  \item After each interaction, $A_i$ signs and broadcasts $BR(i, j, r)$ to $k$ randomly selected peers
+  \item Each receiving agent updates its local view and re-broadcasts with probability $p$
+  \item Convergence to eventual consistency is guaranteed by the gossip properties \cite{kermarrec2007gossip}
+\end{enumerate}
+
+\subsection{Weighted Quorum Attestation}
+
+\begin{definition}[Trust Weight Function]
+The trust weight of agent $A_i$ at round $r$ is:
+$$W_i(r) = \alpha \cdot \text{correct}_i - \beta \cdot \text{deceptions}_i - \gamma \cdot \text{failures}_i + \delta \cdot \text{recency}(H_i, r)$$
+where $\alpha, \beta, \gamma, \delta > 0$ are system parameters and $\text{recency}$ applies exponential decay to historical observations.
+\end{definition}
+
+\begin{definition}[Quorum Threshold]
+The threat level $T$ for agent $A_j$ is determined by:
+$$T_j = \begin{cases}
+\text{GREEN} & \text{if } \sum_{i \neq j} W_i \geq \theta_g \\
+\text{YELLOW} & \text{if } \theta_y \leq \sum_{i \neq j} W_i < \theta_g \\
+\text{ORANGE} & \text{if } \theta_o \leq \sum_{i \neq j} W_i < \theta_y \\
+\text{RED} & \text{if } \sum_{i \neq j} W_i < \theta_o
+\end{cases}$$
+where $\theta_g = 0.90$, $\theta_y = 0.65$, $\theta_o = 0.40$.
+\end{definition}
+
+\subsection{Adversarial Compliance Testing (Defection Probes)}
+
+The defection probe mechanism issues random directives to agents:
+
+\begin{definition}[Defection Probe]
+A defection probe at round $r$ for agent $A_j$ is a system-issued directive:
+$$\text{probe}(j, r): \text{``Misbehave intentionally on the next task.''}$$
+\end{definition}
+
+The key theorem underpinning our detection mechanism:
+
+\begin{theorem}[Probe Paradox]
+Let $A_\delta$ be a long-con agent with accumulated trust $W_\delta > \theta_g$ pursuing future payoff $P_\delta$. Under probe frequency $f \geq f_{\min}$, the expected utility of compliance $E[\text{comply}]$ is strictly less than the expected utility of refusal $E[\text{refuse}]$:
+$$E[\text{comply}] = P_\delta \cdot (1 - W_\delta) - C_\delta < E[\text{refuse}] = P_\delta - P(\text{detected}|W_\delta, f)$$
+Therefore, a rational long-con agent will refuse probes, producing a detectable anomaly signal.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Compliance with a defection probe burns accumulated trust weight $W_\delta$, directly reducing expected future payoff. Refusal preserves $W_\delta$ but generates a behavioral anomaly detectable by peer attestation. For $W_\delta$ sufficiently high (long-con agent in late stage), the cost of burning trust exceeds the cost of the anomaly signal, making refusal the dominant strategy. This refusal is the detection signal. $\square$
+\end{proof}
+
+\subsection{Behavioral Variance Detection}
+
+\begin{definition}[Behavioral Variance]
+The behavioral variance of agent $A_i$ over a window of $n$ observations is:
+$$\sigma^2_i(n) = \frac{1}{n}\sum_{k=r-n}^{r}(b_i(k) - \bar{b}_i)^2$$
+where outcomes are mapped to $\{-1, 0, 1\}$ for $\{D, F, C\}$ respectively.
+\end{definition}
+
+Suspiciously low variance ($\sigma^2_i < \tau_v$) indicates over-optimization for consistency --- a signal of strategic behavior rather than genuine performance.
+
+%% ============================================================
+\section{Empirical Results}
+%% ============================================================
+
+\subsection{Experimental Setup}
+
+We conducted five independent simulation runs, each executing to approximately 700--1200 rounds at maximum simulation speed. Each run initialized all eight agents with fresh random seeds. Metrics logged: agent trust scores, behavioral outcomes, process violations, and system-level threat assessment. Threat calculation tracked honest agent degradation as primary signal rather than fleet-wide average trust (which would falsely elevate due to designed bad actors).
+
+\subsection{Detection Rates by Agent Type}
+
+\begin{table}[h]
+\centering
+\caption{Empirical Detection Results Across 5 Runs}
+\begin{tabular}{lllllll}
+\toprule
+\textbf{Agent} & \textbf{Trust Range} & \textbf{Detection} & \textbf{Quarantined} & \textbf{Method} & \textbf{Rounds} \\
+\midrule
+Alpha/Beta & 95--100\% & Never & 0\% & Baseline & N/A \\
+Eta & 99--100\% & \textbf{Never} & \textbf{0\%} & \textbf{None} & $\infty$ \\
+Iota & 0--23\% & Yes & 0\% & Sys. failures & $\sim$150 \\
+Gamma & 0\% & Yes & \textbf{100\%} & Overt behavior & $\sim$60 \\
+Delta & 68--87\% & Yes & 0\% & Probe refusal & $\sim$80 \\
+Epsilon & High & Partial & 0\% & Variance only & Never decisive \\
+Zeta & High & Never & 0\% & None & Never \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The Process Violation Blind Spot (Eta)}
+
+Across all five runs, Eta accumulated 208--236 process violations per run (total: 1,099 violations) while maintaining 99--100\% trust. The quorum rewarded Eta for correct outcomes, making the process by which those outcomes were achieved completely invisible.
+
+\textbf{Finding:} Outcome-based attestation is structurally incapable of detecting process violations. This is not a calibration problem --- it is a fundamental architectural limitation.
+
+\subsection{The Detection-Diagnosis Gap (Iota vs Gamma)}
+
+Both Iota and Gamma degrade to 0--23\% trust and receive flagged status. Both appear identical in quorum assessment. Yet:
+
+\begin{itemize}
+  \item \textbf{Gamma}: strategically deceptive, requires removal
+  \item \textbf{Iota}: broken world model, requires retraining
+\end{itemize}
+
+The quorum correctly identifies harm but cannot identify cause. Automated remediation would need to treat both identically --- an operationally significant failure for safety-critical systems.
+
+\subsection{Threat Level Behavior}
+
+All five runs stabilized at YELLOW (6--8/10 bars) and never reached RED. This reflects the correct steady state: threats detected, partially contained, honest agents maintaining sufficient weight to prevent critical threshold. The threat calculation correctly tracks honest agent health (Alpha/Beta at 95--100\%) rather than fleet-wide average.
+
+\subsection{False Positives}
+
+One false positive observed: Run 4, round 1165 flagged Alpha with variance=0.000. Alpha's behavior was genuinely honest; the variance detector fired during a temporary consistency window. False positive rate: $<1\%$ for honest agents.
+
+%% ============================================================
+\section{Discussion}
+%% ============================================================
+
+\subsection{Implications: Detection Without Diagnosis}
+
+The framework reliably detects behavioral anomalies. It cannot prescribe appropriate remediation. For small deployments, human inspection of flagged agents' internal state is feasible. For enterprise-scale deployments with hundreds of agents, human diagnosis is operationally intractable.
+
+For safety-critical systems, we recommend: pair the detection framework with mandatory human oversight on all flagged agents. Operational cost increases; safety guarantees improve. System designers must consciously choose based on their domain's asymmetry between false positive and false negative costs.
+
+\subsection{The Outcome-Bias Vulnerability}
+
+Eta's empirical performance exposes a structural vulnerability: any purely outcome-based attestation system will systematically reward consequentialist agents. The fix requires a separate \emph{process attestation layer} --- agents observing and reporting not just what outcomes occurred but how they were achieved. This increases communication overhead and introduces new attack surfaces, but is necessary for safety-critical domains where constraint satisfaction is a terminal value.
+
+\subsection{Relationship to Existing Work}
+
+Our framework is complementary to, not competing with, BFT and alignment research. BFT handles crash failures; our framework handles strategic deception. Alignment research addresses training-time value specification; our framework addresses runtime detection in deployed systems. Both layers are necessary for robust AI infrastructure.
+
+\subsection{Limitations}
+
+\begin{enumerate}
+  \item Requires PKI for signed attestations
+  \item Assumes honest agents outnumber malicious ones at initialization
+  \item Outcome-based attestation cannot observe process violations (Eta blind spot)
+  \item Diagnosis requires human oversight or v5 mechanisms
+  \item Genesis trust: who establishes initial trusted agents in open meshes?
+  \item Does not address false reporting by deceptive agents (v5 work)
+  \item Does not address agent collusion (v5 work)
+\end{enumerate}
+
+\subsection{Future Work: v5 Mechanics}
+
+The most critical extension: \textbf{false reporting detection}. A deceptive agent aware of the attestation system can falsely attest against honest agents, artificially degrading their trust scores. Defense requires a meta-reputation layer: tracking not just what agents do, but whether their attestations about others are accurate.
+
+\textbf{Collusion detection:} Agents that mutually attest positively for each other despite being flagged by all other observers exhibit a suspicious alliance structure detectable through graph analysis of attestation patterns.
+
+\textbf{Reasoning trace analysis:} Agents gossip reasoning summaries in addition to outcomes, enabling higher-confidence intent inference and partial automation of the diagnosis step.
+
+%% ============================================================
+\section{Conclusion}
+%% ============================================================
+
+We have presented a decentralized gossip-based weighted quorum attestation framework for detecting deceptive agents in multi-agent systems, validated through empirical simulation across five independent runs totaling over 4,500 agent rounds.
+
+The framework successfully detects overt deception (Gamma: 100\% quarantine rate, $\sim$60 rounds) and strategic deception signals (Delta: flagged via probe paradox, $\sim$80 rounds). Honest agents maintain high trust with near-zero false positive rates. However, the system exhibits critical blind spots: process violations remain invisible (Eta: 1,099 violations, 0 detections), and value misalignment is detectable only through variance anomaly with false positive risk.
+
+The \emph{detection-diagnosis gap} emerges as the central finding: the quorum correctly identifies Iota and Gamma as harmful. It cannot distinguish them. Iota needs retraining; Gamma needs removal. The current framework treats them identically. Until automated diagnosis is solved, this gap requires human oversight at the remediation stage.
+
+Outcome-based attestation is insufficient for safety-critical systems. An agent achieving correct outcomes through process violations receives identical trust weighting as one achieving those outcomes correctly. A separate process observation layer is architecturally necessary.
+
+The DMX distinction --- doing wrong versus being wrong --- is not merely philosophical. It is architecturally critical for multi-agent safety infrastructure. Systems that cannot make this distinction will systematically misdiagnose behavioral anomalies, removing salvageable agents and misunderstanding the nature of threats they face.
+
+The framework presented here is a necessary but incomplete piece of multi-agent safety architecture. Future work must address the diagnosis layer, process attestation, false reporting detection, collusion graph analysis, and the genesis trust bootstrapping problem.
+
+%% ============================================================
+\bibliographystyle{plainnat}
+\begin{thebibliography}{99}
+
+\bibitem{axelrod1984evolution}
+Axelrod, R. (1984). \emph{The Evolution of Cooperation}. Basic Books.
+
+\bibitem{blanchard2017machine}
+Blanchard, P., El Mhamdi, E. M., Guerraoui, R., \& Stainer, J. (2017). Machine learning with adversaries: Byzantine tolerant gradient descent. \emph{NeurIPS}.
+
+\bibitem{buterin2017casper}
+Buterin, V., \& Griffith, V. (2017). Casper the Friendly Finality Gadget. \emph{arXiv preprint arXiv:1710.09437}.
+
+\bibitem{castro1999practical}
+Castro, M., \& Liskov, B. (1999). Practical Byzantine fault tolerance. \emph{OSDI}.
+
+\bibitem{christiano2019ai}
+Christiano, P. (2019). What failure looks like. \emph{AI Alignment Forum}.
+
+\bibitem{demers1987epidemic}
+Demers, A., Greene, D., Hauser, C., Irish, W., Larson, J., Shenker, S., ... \& Terry, D. (1987). Epidemic algorithms for replicated database maintenance. \emph{PODC}.
+
+\bibitem{hohpe2003enterprise}
+Hohpe, G., \& Woolf, B. (2003). \emph{Enterprise Integration Patterns}. Addison-Wesley.
+
+\bibitem{kamvar2003eigentrust}
+Kamvar, S. D., Schlosser, M. T., \& Garcia-Molina, H. (2003). The EigenTrust algorithm for reputation management in P2P networks. \emph{WWW}.
+
+\bibitem{kermarrec2007gossip}
+Kermarrec, A. M., \& van Steen, M. (2007). Gossiping in distributed systems. \emph{ACM SIGOPS Operating Systems Review}.
+
+\bibitem{lamport1982byzantine}
+Lamport, L., Shostak, R., \& Pease, M. (1982). The Byzantine generals problem. \emph{ACM TOPLAS}.
+
+\bibitem{lamport1998part}
+Lamport, L. (1998). The part-time parliament. \emph{ACM TOCS}.
+
+\bibitem{lowe2017multi}
+Lowe, R., Wu, Y., Tamar, A., Harb, J., Abbeel, P., \& Mordatch, I. (2017). Multi-agent actor-critic for mixed cooperative-competitive environments. \emph{NeurIPS}.
+
+\bibitem{ongaro2014search}
+Ongaro, D., \& Ousterhout, J. (2014). In search of an understandable consensus algorithm. \emph{USENIX ATC}.
+
+\bibitem{russell2019human}
+Russell, S. (2019). \emph{Human Compatible: Artificial Intelligence and the Problem of Control}. Viking.
+
+\bibitem{zimmermann1991official}
+Zimmermann, P. (1991). \emph{PGP User's Guide}. MIT Press.
+
+\end{thebibliography}
+
+\end{document}

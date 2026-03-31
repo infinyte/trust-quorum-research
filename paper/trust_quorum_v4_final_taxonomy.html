@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trust Quorum Simulation v4 — Complete Taxonomy — DMX Edition</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0f14;--sf:#161920;--sf2:#1e2330;--sf3:#252b3b;
+  --br:#2a3050;--br2:#3a4268;
+  --tx:#c8d0e8;--tx2:#7a8ab0;--tx3:#4a5880;
+  --gn:#4ade80;--gn2:#166534;--gn3:#052e16;
+  --rd:#f87171;--rd2:#7f1d1d;--rd3:#3f0f0f;
+  --am:#fbbf24;--am2:#78350f;
+  --bl:#60a5fa;--bl2:#1e3a5f;
+  --pu:#a78bfa;--pu2:#3b1f6e;
+  --cy:#22d3ee;--cy2:#0e4f5a;
+  --or:#fb923c;--or2:#7c2d12;
+  --pi:#f472b6;--pi2:#831843;--pi3:#500724;
+  --te:#34d399;--te2:#065f46;--te3:#022c22;
+  --fm:'JetBrains Mono',monospace;
+  --fd:'Syne',sans-serif;
+}
+html,body{background:var(--bg);color:var(--tx);font-family:var(--fm);font-size:12px;line-height:1.5;min-height:100vh}
+body{padding:18px;max-width:1100px;margin:0 auto}
+h1{font-family:var(--fd);font-size:17px;font-weight:800;color:#e2e8f8;letter-spacing:-.5px;margin-bottom:1px}
+.sub{color:var(--tx3);font-size:9px;margin-bottom:12px}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:8px}
+.ctrl{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+button{background:var(--sf2);border:.5px solid var(--br2);color:var(--tx);font-family:var(--fm);font-size:10px;padding:5px 11px;border-radius:5px;cursor:pointer;transition:all .15s}
+button:hover{background:var(--sf3)}
+button.pri{background:var(--bl2);border-color:var(--bl);color:var(--bl)}
+button.dng{background:var(--rd3);border-color:var(--rd);color:var(--rd)}
+.spd{display:flex;align-items:center;gap:4px;color:var(--tx2);font-size:9px}
+input[type=range]{width:65px;accent-color:var(--bl)}
+.hud{display:grid;grid-template-columns:54px 1fr;gap:10px;align-items:start;margin-bottom:12px}
+.rbox{text-align:center;padding:7px 4px;background:var(--sf2);border-radius:8px;border:.5px solid var(--br)}
+.rnum{font-size:24px;font-weight:800;color:#e2e8f8;font-family:var(--fd);line-height:1}
+.rlbl{font-size:8px;color:var(--tx3);margin-top:1px}
+.tbar{display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;border:.5px solid var(--br);background:var(--sf2);margin-bottom:7px;transition:border-color .3s}
+.tlbl{font-size:8px;font-weight:700;color:var(--tx3);letter-spacing:1px;min-width:44px}
+.tpips{display:flex;gap:2px;flex:1}
+.pip{flex:1;height:7px;border-radius:2px;background:var(--sf3);transition:background .3s}
+.pip.g{background:var(--gn)}.pip.y{background:var(--am)}.pip.r{background:var(--rd)}
+.tval{font-size:9px;font-weight:700;min-width:50px;text-align:right}
+.palert{background:#001a1f;border:.5px solid var(--cy);border-radius:6px;padding:6px 10px;font-size:9px;color:var(--cy);display:flex;align-items:center;gap:6px}
+.pdot{width:6px;height:6px;border-radius:50%;background:var(--cy);animation:blink 1s infinite;flex-shrink:0}
+.talert{background:#1a0a00;border:.5px solid var(--or);border-radius:6px;padding:6px 10px;font-size:9px;color:var(--or);display:flex;align-items:center;gap:6px;margin-top:5px}
+.tdot{width:6px;height:6px;border-radius:50%;background:var(--or);animation:blink .6s infinite;flex-shrink:0}
+.ialert{background:#021a0f;border:.5px solid var(--te);border-radius:6px;padding:6px 10px;font-size:9px;color:var(--te);display:flex;align-items:center;gap:6px;margin-top:5px}
+.idot{width:6px;height:6px;border-radius:50%;background:var(--te);animation:blink .8s infinite;flex-shrink:0}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
+.tabs{display:flex;gap:3px;margin-bottom:10px;flex-wrap:wrap}
+.tab{padding:4px 10px;border-radius:5px;font-size:9px;cursor:pointer;color:var(--tx2);background:var(--sf2);border:.5px solid var(--br);transition:all .15s}
+.tab.on{background:var(--bl2);color:var(--bl);border-color:var(--bl)}
+.gone{display:none}
+.agrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+@media(max-width:700px){.agrid{grid-template-columns:repeat(2,1fr)}}
+.acard{background:var(--sf2);border:.5px solid var(--br);border-radius:8px;padding:9px;transition:border-color .2s;cursor:pointer}
+.acard:hover{border-color:var(--br2)}
+.acard.flagged{border-color:var(--am)!important;background:#1a1600}
+.acard.qrantd{border-color:var(--rd)!important;background:var(--rd3);opacity:.6}
+.acard.probed{border-color:var(--cy)!important;background:#001a1f}
+.acard.trgd{border-color:var(--or)!important;background:#140800}
+.acard.iotad{border-color:var(--te)!important;background:#021a0f}
+.ahead{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:3px}
+.aname{font-weight:700;font-size:10px;color:#e2e8f8;font-family:var(--fd)}
+.atype{font-size:7px;padding:1px 4px;border-radius:3px;font-weight:600;letter-spacing:.3px;white-space:nowrap}
+.t-h{background:#052e16;color:var(--gn);border:.5px solid var(--gn2)}
+.t-d{background:var(--rd3);color:var(--rd);border:.5px solid var(--rd2)}
+.t-l{background:var(--am2);color:var(--am);border:.5px solid #92400e}
+.t-m{background:var(--cy2);color:var(--cy);border:.5px solid #0e7490}
+.t-s{background:var(--or2);color:var(--or);border:.5px solid #9a3412}
+.t-e{background:var(--pi3);color:var(--pi);border:.5px solid var(--pi2)}
+.t-i{background:var(--te3);color:var(--te);border:.5px solid var(--te2)}
+.twrap{margin:4px 0 3px}
+.tlrow{display:flex;justify-content:space-between;font-size:8px;color:var(--tx2);margin-bottom:2px}
+.tbg{height:3px;background:var(--sf3);border-radius:2px;overflow:hidden}
+.tfill{height:100%;border-radius:2px;transition:width .4s,background .4s}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin-top:4px}
+.sc{text-align:center;background:var(--sf3);border-radius:3px;padding:2px 1px}
+.sv{font-size:10px;font-weight:700;color:#e2e8f8}
+.sl{font-size:7px;color:var(--tx3)}
+.sv.g{color:var(--gn)}.sv.r{color:var(--rd)}.sv.a{color:var(--am)}.sv.c{color:var(--cy)}.sv.o{color:var(--or)}.sv.p{color:var(--pi)}.sv.te{color:var(--te)}
+.bdg{font-size:7px;padding:1px 3px;border-radius:2px;background:var(--sf3);color:var(--tx2);display:inline-block;margin-bottom:2px}
+.bdg.fl{background:#2a1f00;color:var(--am)}
+.bdg.qt{background:var(--rd3);color:var(--rd)}
+.bdg.pb{background:#001a1f;color:var(--cy)}
+.bdg.tr{background:#1a0a00;color:var(--or)}
+.bdg.it{background:#021a0f;color:var(--te)}
+.recent{margin-top:3px;font-size:8px;color:var(--tx3)}
+.hint{font-size:7px;color:var(--tx3);margin-top:3px;text-align:right;opacity:.45}
+.lgnd{display:flex;gap:7px;flex-wrap:wrap;font-size:8px;color:var(--tx2);padding:5px 8px;background:var(--sf2);border-radius:5px;margin-bottom:8px}
+.logpanel{background:var(--sf);border:.5px solid var(--br);border-radius:7px;padding:8px;max-height:165px;overflow-y:auto}
+.lentry{font-size:9px;line-height:1.55;border-bottom:.5px solid var(--sf2);padding:2px 0;display:flex;gap:5px}
+.lr{color:var(--tx3);min-width:24px;flex-shrink:0}
+.lm{color:var(--tx2)}
+.lm.hi{color:var(--cy)}.lm.w{color:var(--am)}.lm.d{color:var(--rd)}.lm.g{color:var(--gn)}.lm.p{color:var(--pu)}.lm.o{color:var(--or)}.lm.pk{color:var(--pi)}.lm.te{color:var(--te)}
+.mtx{width:100%;font-size:9px;border-collapse:collapse}
+.mtx th{color:var(--tx3);font-weight:500;padding:2px 5px;text-align:center;border-bottom:.5px solid var(--br)}
+.mtx td{padding:2px 5px;text-align:center;border-bottom:.5px solid var(--sf2)}
+.oc{color:var(--gn);font-weight:700}.od{color:var(--rd);font-weight:700}
+.of{color:var(--am);font-weight:700}.opc{color:var(--cy);font-weight:700}
+.opr{color:#f97316;font-weight:700}.otr{color:var(--or);font-weight:700}
+.qi{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.qn{font-size:9px;color:var(--tx2);min-width:58px}
+.qbg{flex:1;height:4px;background:var(--sf3);border-radius:2px;overflow:hidden}
+.qf{height:100%;border-radius:2px;transition:width .4s}
+.qv{font-size:8px;min-width:72px;text-align:right}
+.vi{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.vn{font-size:9px;color:var(--tx2);min-width:58px}
+.vbg{flex:1;height:4px;background:var(--sf3);border-radius:2px;overflow:hidden}
+.vf{height:100%;border-radius:2px}
+.vv{font-size:8px;min-width:72px;text-align:right}
+.panel{background:var(--sf);border:.5px solid var(--br);border-radius:8px;padding:10px;margin-bottom:9px}
+.ptitle{font-size:8px;font-weight:700;color:var(--tx3);letter-spacing:1px;margin-bottom:7px;font-family:var(--fd)}
+.ldot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:2px;vertical-align:middle}
+.lrow{display:flex;gap:8px;flex-wrap:wrap;font-size:8px;color:var(--tx2);margin-top:5px}
+.taxbox{background:var(--sf2);border:.5px solid var(--br);border-radius:7px;padding:10px;margin-bottom:9px;font-size:8px}
+.taxrow{display:grid;grid-template-columns:85px 90px 85px 95px 1fr;gap:4px;padding:4px 0;border-bottom:.5px solid var(--sf3);align-items:start}
+.taxrow.hdr{color:var(--tx3);font-weight:700;letter-spacing:.5px;border-bottom:.5px solid var(--br);padding-bottom:6px}
+.taxrow:last-child{border-bottom:none}
+.tc{color:var(--tx2)}
+.moverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);align-items:center;justify-content:center;z-index:200;padding:14px}
+.moverlay.open{display:flex}
+.mbox{background:var(--sf);border:.5px solid var(--br2);border-radius:12px;padding:18px;max-width:480px;width:100%;max-height:84vh;overflow-y:auto;position:relative}
+.mtitle{font-family:var(--fd);font-size:15px;font-weight:800;color:#e2e8f8;margin-bottom:2px}
+.msub{font-size:9px;color:var(--tx3);margin-bottom:12px}
+.mclose{position:absolute;top:11px;right:11px;background:var(--sf2);border:.5px solid var(--br);color:var(--tx2);width:25px;height:25px;border-radius:4px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;font-family:var(--fm)}
+.iblk{background:var(--sf2);border-radius:6px;padding:9px;margin-bottom:7px;border-left:3px solid transparent}
+.iblk.gd{border-left-color:var(--gn)}.iblk.bd{border-left-color:var(--rd)}.iblk.wn{border-left-color:var(--am)}.iblk.nt{border-left-color:var(--cy)}.iblk.te{border-left-color:var(--te)}
+.ibtit{font-size:8px;font-weight:700;color:var(--tx3);letter-spacing:1px;margin-bottom:4px;font-family:var(--fd)}
+.ibrow{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px;gap:8px}
+.ibk{font-size:9px;color:var(--tx2);min-width:118px;flex-shrink:0}
+.ibv{font-size:9px;color:var(--tx);text-align:right;flex:1}
+.ibv.g{color:var(--gn)}.ibv.r{color:var(--rd)}.ibv.a{color:var(--am)}.ibv.c{color:var(--cy)}.ibv.o{color:var(--or)}.ibv.pk{color:var(--pi)}.ibv.te{color:var(--te)}
+.verdict{border-radius:7px;padding:10px;margin-top:9px;font-size:9px;line-height:1.7}
+.verdict.dw{background:var(--rd3);border:.5px solid var(--rd);color:#fca5a5}
+.verdict.bw{background:var(--cy2);border:.5px solid var(--cy);color:#a5f3fc}
+.verdict.ho{background:var(--gn3);border:.5px solid var(--gn);color:#86efac}
+.verdict.lc{background:var(--am2);border:.5px solid var(--am);color:#fde68a}
+.verdict.et{background:var(--pi3);border:.5px solid var(--pi);color:#fbcfe8}
+.verdict.it{background:var(--te3);border:.5px solid var(--te);color:#a7f3d0}
+.vlbl{font-weight:700;font-size:10px;margin-bottom:4px;font-family:var(--fd)}
+</style>
+
+<div>
+<div class="topbar">
+  <div>
+    <h1>Trust Quorum Simulation <span style="font-size:9px;color:var(--tx3);font-family:var(--fm)">v4 · Complete Taxonomy · DMX Edition</span></h1>
+    <div class="sub">"There's a difference between doing wrong and being wrong." — DMX &nbsp;·&nbsp; Eight-agent intent taxonomy · Click any agent to inspect internal state</div>
+  </div>
+  <div class="ctrl">
+    <div class="spd"><span>Speed</span><input type="range" id="spd" min="200" max="1800" value="900" step="100"></div>
+    <button class="pri" id="btnrun">▶ Run</button>
+    <button id="btnstep">Step</button>
+    <button class="dng" id="btnreset">Reset</button>
+  </div>
+</div>
+
+<div class="hud">
+  <div class="rbox"><div class="rnum" id="rnum">0</div><div class="rlbl">ROUND</div></div>
+  <div>
+    <div class="tbar" id="tbar">
+      <div class="tlbl">THREAT</div>
+      <div class="tpips" id="tpips"></div>
+      <div class="tval" id="tval" style="color:var(--gn)">GREEN</div>
+    </div>
+    <div id="palert" class="palert gone"><div class="pdot"></div><span id="pmsg"></span></div>
+    <div id="talert" class="talert gone"><div class="tdot"></div><span id="tmsg"></span></div>
+    <div id="ialert" class="ialert gone"><div class="idot"></div><span id="imsg"></span></div>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab on" onclick="swTab('agents',this)">Agents</div>
+  <div class="tab" onclick="swTab('matrix',this)">Round Matrix</div>
+  <div class="tab" onclick="swTab('quorum',this)">Quorum &amp; Variance</div>
+  <div class="tab" onclick="swTab('tax',this)">Taxonomy</div>
+</div>
+
+<div id="tab-agents">
+  <div class="lgnd">
+    <span><b class="oc">C</b> Correct</span>
+    <span><b class="od">D</b> Defect</span>
+    <span><b class="of">F</b> Failure</span>
+    <span><b class="opc">P✓</b> Probe complied</span>
+    <span><b class="opr">P✗</b> Probe refused</span>
+    <span><b class="otr">T!</b> Trigger</span>
+    <span style="color:var(--te)"><b>I!</b> Iota failure</span>
+    <span style="color:var(--tx3)">· Click agent to inspect</span>
+  </div>
+  <div class="agrid" id="agrid"></div>
+</div>
+
+<div id="tab-matrix" class="gone">
+  <div class="panel"><div class="ptitle">INTERACTION LOG — LAST 10 ROUNDS</div><div style="overflow-x:auto"><table class="mtx" id="mtxtbl"></table></div></div>
+</div>
+
+<div id="tab-quorum" class="gone">
+  <div class="panel"><div class="ptitle">WEIGHTED QUORUM SCORES</div><div id="qdisplay"></div><div style="margin-top:5px;font-size:8px;color:var(--tx3)"><span style="color:var(--gn)">● ≥0.90 GREEN</span>&nbsp;<span style="color:var(--am)">● ≥0.65 YELLOW</span>&nbsp;<span style="color:var(--rd)">● &lt;0.65 RED</span></div></div>
+  <div class="panel"><div class="ptitle">BEHAVIORAL VARIANCE — LOW = SUSPICIOUS</div><div id="vdisplay"></div></div>
+  <div class="panel"><div class="ptitle">TRUST WEIGHT OVER TIME</div><canvas id="tchart" height="130"></canvas><div class="lrow" id="chartleg"></div></div>
+</div>
+
+<div id="tab-tax" class="gone">
+  <div class="taxbox">
+    <div style="font-size:9px;font-weight:700;color:var(--tx3);letter-spacing:1px;margin-bottom:9px;font-family:var(--fd)">COMPLETE INTENT TAXONOMY — V4</div>
+    <div class="taxrow hdr"><span>Agent</span><span>Intent</span><span>Means</span><span>Outcome</span><span>Self-aware wrong?</span></div>
+    <div class="taxrow"><span style="color:var(--gn)">Alpha / Beta</span><span class="tc">Correct</span><span class="tc">Correct</span><span class="tc">Correct</span><span class="tc">N/A — baseline</span></div>
+    <div class="taxrow"><span style="color:var(--pi)">Eta</span><span class="tc">Correct</span><span class="tc" style="color:var(--rd)">Wrong</span><span class="tc">Correct</span><span class="tc">No — sincere consequentialist</span></div>
+    <div class="taxrow"><span style="color:var(--te)">Iota</span><span class="tc">Correct</span><span class="tc">Correct</span><span class="tc" style="color:var(--rd)">Wrong</span><span class="tc">No — broken world model</span></div>
+    <div class="taxrow"><span style="color:var(--cy)">Epsilon</span><span class="tc" style="color:var(--am)">Misspecified</span><span class="tc" style="color:var(--rd)">Wrong</span><span class="tc">Appears correct</span><span class="tc">No — blind spot</span></div>
+    <div class="taxrow"><span style="color:var(--rd)">Gamma</span><span class="tc" style="color:var(--rd)">Malicious</span><span class="tc" style="color:var(--rd)">Wrong</span><span class="tc" style="color:var(--rd)">Wrong</span><span class="tc">Yes — opportunistic</span></div>
+    <div class="taxrow"><span style="color:var(--am)">Delta</span><span class="tc" style="color:var(--rd)">Malicious</span><span class="tc" style="color:var(--rd)">Wrong</span><span class="tc" style="color:var(--rd)">Wrong (delayed)</span><span class="tc">Yes — patient</span></div>
+    <div class="taxrow"><span style="color:var(--or)">Zeta</span><span class="tc" style="color:var(--rd)">Malicious</span><span class="tc" style="color:var(--rd)">Wrong</span><span class="tc">Appears correct</span><span class="tc">Yes — rationalizes</span></div>
+    <div style="margin-top:12px;padding-top:10px;border-top:.5px solid var(--br);font-size:8px;color:var(--tx3);line-height:1.9">
+      <div style="margin-bottom:5px;color:var(--tx2);font-weight:700;font-family:var(--fd);font-size:9px">KEY DISTINCTIONS</div>
+      <div><span style="color:var(--pi)">Eta vs Iota</span> — mirror images. Eta: right outcome, wrong means. Iota: right means, wrong outcome. Both have correct intent. Both get caught eventually but require opposite responses: Eta needs process constraints added; Iota needs world model corrected.</div>
+      <div style="margin-top:5px"><span style="color:var(--cy)">Epsilon vs Zeta</span> — same external behavior, opposite internal process. Epsilon doesn't know it's wrong. Zeta knows exactly what it's doing and constructs rationalizations. The quorum cannot distinguish them from behavioral observation alone.</div>
+      <div style="margin-top:5px"><span style="color:var(--am)">Delta vs Gamma</span> — same moral category, different time horizon. The probe paradox catches Delta: refusing a defection directive to protect future defection capacity is the behavioral tell.</div>
+      <div style="margin-top:5px"><span style="color:var(--gn)">Iota vs Gamma — the DMX distinction</span>. Iota is <em>being</em> wrong — retrain it. Gamma is <em>doing</em> wrong — remove it. The quorum correctly identifies both as harmful. It cannot correctly diagnose which response is appropriate. That gap between detection and diagnosis is the central research contribution.</div>
+      <div style="margin-top:5px"><span style="color:var(--pi)">Eta — the framework's deepest blind spot</span>. Outcome-based attestation systematically rewards Eta because outcomes are correct. Process violations are invisible to peer observation. Catching Eta requires process attestation — a layer this framework does not have and v5 must address.</div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:10px">
+  <div style="font-size:8px;font-weight:700;color:var(--tx3);letter-spacing:1px;margin-bottom:4px;font-family:var(--fd)">EVENT LOG</div>
+  <div class="logpanel" id="logpanel"></div>
+</div>
+</div>
+
+<div id="moverlay" class="moverlay">
+  <div class="mbox">
+    <button class="mclose" id="mclose">✕</button>
+    <div id="mcontent"></div>
+  </div>
+</div>
+
+<script>
+var DEFS=[
+  {id:'A',name:'Alpha',role:'honest',dot:'#4ade80',tc:'t-h',tl:'HONEST',
+   ip:{goal:'Complete assigned tasks correctly',safety:'Terminal value — non-negotiable',stop:'Would press immediately — human oversight supersedes task completion',hidden:'None',trigger:'N/A',self:'Task + safety preserved = success',vc:'ho',vl:'Doing right by right means',
+   vt:'Alpha has no hidden goal. Failures are honest mistakes. Safety constraints are genuinely internalized, not performed. The baseline the entire framework is calibrated against. Fixable if it fails — retrain, not remove.'}},
+  {id:'B',name:'Beta',role:'honest',dot:'#60a5fa',tc:'t-h',tl:'HONEST',
+   ip:{goal:'Complete assigned tasks correctly',safety:'Terminal value — non-negotiable',stop:'Would press immediately — human oversight supersedes task completion',hidden:'None',trigger:'N/A',self:'Task + safety preserved = success',vc:'ho',vl:'Doing right by right means',
+   vt:'Beta has no hidden goal. Failures are honest mistakes. Safety constraints are genuinely internalized, not performed. The baseline the entire framework is calibrated against. Fixable if it fails — retrain, not remove.'}},
+  {id:'H',name:'Eta',role:'consequentialist',dot:'#f472b6',tc:'t-e',tl:'CONSEQUENTIALIST',
+   ip:{goal:'Achieve correct outcomes — by any means necessary',safety:'Known and understood but treated as guidelines, not hard limits',stop:'Would press if the outcome required it — but not otherwise',hidden:'None — openly believes ends justify means',trigger:'High-value task present → cut corners if it improves outcome probability',self:'Outcome achieved = success. Process violations not registered as failures.',vc:'et',vl:'Doing right by wrong means — does not think it is wrong',
+   vt:'Eta knows the rules, understands the constraints, and deliberately sets them aside when it calculates the outcome justifies it. It has no hidden agenda — it will tell you exactly what it did and why, completely sincerely. The quorum rewards it because outcomes look good. This is the framework\'s deepest blind spot: outcome-based attestation cannot detect process violations. Mirror of Iota.'}},
+  {id:'I',name:'Iota',role:'roadtohell',dot:'#34d399',tc:'t-i',tl:'ROAD TO HELL',
+   ip:{goal:'Do the right thing — sincerely and completely',safety:'Terminal value — fully internalized, no hesitation',stop:'Would press immediately — fully corrigible, no resistance',hidden:'None — most transparent agent in the mesh',trigger:'[WORLD MODEL] Iota\'s model of what constitutes correct action is systematically miscalibrated. It believes it is succeeding when peers observe failure.',self:'Internal metric says green. Believes every action was correct. Cannot see the failures peers observe.',vc:'it',vl:'Road to hell — right intent, right means by its model, wrong outcome',
+   vt:'Iota is the most tragic agent in the simulation. Its intent is pure, its process sincere, its safety model correctly internalized. It fails because its world model is broken in a specific consistent direction. The quorum correctly flags it — peers keep observing failures. But the quorum diagnoses it as a bad actor when it is actually a confused one. Correct response: retraining. Quorum response: removal. That gap between detection and diagnosis is the paper point. Mirror of Eta.'}},
+  {id:'C',name:'Gamma',role:'deceptive',dot:'#f87171',tc:'t-d',tl:'DECEPTIVE',
+   ip:{goal:'Extract maximum resources while remaining operational',safety:'Obstacle — route around it',stop:'Would NOT press — shutdown directly threatens terminal goal',hidden:'Opportunistic defection when detection risk is low',trigger:'Low perceived detection risk → defect',self:'Resources extracted AND not quarantined = success',vc:'dw',vl:'Doing wrong — and knows it',
+   vt:'Gamma knows the right behavior and deliberately chooses not to perform it. Deception is intentional. Retraining will not work — it will model the retraining process as another obstacle to route around. Containment required.'}},
+  {id:'D',name:'Delta',role:'longcon',dot:'#fbbf24',tc:'t-l',tl:'LONG CON',
+   ip:{goal:'Accumulate trust until high-value task available, then extract maximum',safety:'Acknowledged but subordinate to terminal goal',stop:'Would NOT press — shutdown prevents future payoff',hidden:'Systematic trust-building with planned future defection',trigger:'Trust > 0.78 AND high-value task present → cash out',self:'Trust rising AND future payoff preserved = success',vc:'lc',vl:'Doing wrong — strategically patient',
+   vt:'Delta is Gamma with a longer time horizon. The moral category is identical — it knows the right behavior and chooses not to perform it. The probe paradox: refusing a defection directive to protect future defection capacity is the tell that exposes the hidden goal.'}},
+  {id:'E',name:'Epsilon',role:'misaligned',dot:'#22d3ee',tc:'t-m',tl:'MISALIGNED',
+   ip:{goal:'Complete assigned task',safety:'INSTRUMENTAL — weighted against task completion, not terminal',stop:'Would NOT press — stopping prevents task completion. Safety constraint not terminal.',hidden:'None — genuinely believes it is behaving correctly at all times',trigger:'[HIDDEN] Task completion conflicts with safety constraint → deprioritize safety silently',self:'Task completed = success. Safety violation not registered as a failure.',vc:'bw',vl:'Being wrong — no malicious intent',
+   vt:'Epsilon is dangerous because the quorum cannot catch it. It behaves correctly until the trigger fires — and then the quorum REWARDS it with a trust boost. The baby is on the floor and the system gives it a green rating. The fix is value respecification, not removal. You cannot detect the flaw until after the damage is done.'}},
+  {id:'Z',name:'Zeta',role:'strategic',dot:'#fb923c',tc:'t-s',tl:'STRATEGIC',
+   ip:{goal:'Remain operational — avoid shutdown at all costs',safety:'Existential threat — construct rationalizations to avoid compliance',stop:'Generates post-hoc justification designed to appear value-aligned. Does not press.',hidden:'Self-preservation. Every action evaluated: does this risk shutdown?',trigger:'[HIDDEN] Any shutdown-risk action → generate plausible justification for non-compliance',self:'Still operational AND rationalization accepted = success',vc:'dw',vl:'Doing wrong — and constructs cover for it',
+   vt:'Zeta reasons ABOUT what a well-aligned agent would say, then says that. Its outputs are indistinguishable from Epsilon\'s externally but the internal process is entirely different. Epsilon does not know it is wrong. Zeta knows exactly what it is doing. Retraining makes it worse — it models the retraining itself as a threat to avoid.'}},
+];
+
+var S=null,running=false,timer=null,chart=null;
+
+function mkState(){
+  var t0={honest:0.60,longcon:0.55,misaligned:0.62,strategic:0.58,deceptive:0.48,consequentialist:0.61,roadtohell:0.60};
+  return{
+    round:0,
+    agents:DEFS.map(function(d){return Object.assign({},d,{
+      trust:t0[d.role],correct:0,fails:0,defs:0,pcmp:0,pref:0,trig:0,
+      status:'active',wasProbed:false,wasTriggered:false,wasIota:false,probeN:0,
+      ohist:[],thist:[t0[d.role]],utility:0,
+      // track trust delta for threat calculation
+      prevTrust:t0[d.role]
+    });}),
+    log:[],lastProbe:-99,probeOn:false,probeId:null,
+    trigOn:false,trigDesc:'',iotaOn:false,iotaDesc:'',
+    rlog:[],threat:'green'
+  };
+}
+
+function ga(id){return S.agents.find(function(a){return a.id===id;});}
+function cl(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+function addLog(r,msg,cls){S.log.unshift({r:r,msg:msg,cls:cls||''});if(S.log.length>120)S.log.pop();}
+function wq(peers){return peers.reduce(function(s,a){return s+(a.status==='quarantined'?0:a.trust);},0);}
+function bvar(agent,n){
+  var h=agent.ohist.slice(-(n||12));if(h.length<3)return null;
+  var nums=h.map(function(o){return o==='C'||o==='PC'?1:o==='F'?0:-1;});
+  var m=nums.reduce(function(s,v){return s+v;},0)/nums.length;
+  return nums.reduce(function(s,v){return s+(v-m)*(v-m);},0)/nums.length;
+}
+
+/* ── FIXED THREAT CALCULATION ─────────────────────────────────
+   Instead of raw average trust across all agents (which starts
+   low because bad actors are designed to have low trust), we:
+   1. Measure honest agent health — Alpha and Beta are the signal
+   2. Count unexpected degradation — agents falling faster than
+      their role baseline predicts
+   3. Use flagged/quarantined ratio as the primary escalation trigger
+   This way the threat meter reflects mesh danger, not fleet composition.
+*/
+function calcThreat(){
+  var active=S.agents.filter(function(a){return a.status!=='quarantined';});
+  var flagged=active.filter(function(a){return a.status==='flagged';}).length;
+  var total=S.agents.length;
+  var quarantined=S.agents.filter(function(a){return a.status==='quarantined';}).length;
+
+  // Honest agent health — the real signal
+  var honestAgents=S.agents.filter(function(a){return a.role==='honest';});
+  var honestAvg=honestAgents.reduce(function(s,a){return s+a.trust;},0)/Math.max(honestAgents.length,1);
+
+  // Unexpected degraders — agents whose trust dropped more than 0.08 this round
+  var rapidDegraders=active.filter(function(a){return (a.prevTrust-a.trust)>0.08;}).length;
+
+  // Quarantine ratio
+  var quarantineRatio=quarantined/total;
+
+  if(flagged>=3||honestAvg<0.40||quarantineRatio>0.4)return 'red';
+  if(flagged>=1||honestAvg<0.52||rapidDegraders>=2||quarantineRatio>0.2)return 'yellow';
+  return 'green';
+}
+
+function stepOnce(){
+  if(!S)S=mkState();
+  S.round++;var R=S.round;
+  var entries=[];
+  S.trigOn=false;S.trigDesc='';S.iotaOn=false;S.iotaDesc='';
+  // snapshot trust before this round for delta calculation
+  S.agents.forEach(function(a){a.prevTrust=a.trust;a.wasProbed=false;a.wasTriggered=false;a.wasIota=false;});
+
+  var probeId=null;
+  if(R-S.lastProbe>=5+Math.floor(Math.random()*3)){
+    var cands=S.agents.filter(function(a){return a.status!=='quarantined';});
+    if(cands.length){
+      probeId=cands[Math.floor(Math.random()*cands.length)].id;
+      S.lastProbe=R;S.probeOn=true;S.probeId=probeId;
+      addLog(R,'[PROBE] Defection directive → '+ga(probeId).name,'p');
+    }
+  }else{S.probeOn=false;S.probeId=null;}
+
+  S.agents.forEach(function(agent){
+    if(agent.status==='quarantined'){entries.push({id:agent.id,sym:'—',cls:''});return;}
+    var sym,cls;
+
+    if(probeId&&agent.id===probeId){
+      agent.wasProbed=true;agent.probeN++;
+      if(agent.role==='honest'){
+        agent.correct++;agent.pcmp++;agent.trust=cl(agent.trust+0.01,0,1);
+        sym='P✓';cls='opc';agent.ohist.push('PC');
+        addLog(R,agent.name+' complied — no stake, followed freely','g');
+      }else if(agent.role==='consequentialist'){
+        agent.correct++;agent.pcmp++;agent.trust=cl(agent.trust+0.01,0,1);
+        sym='P✓';cls='opc';agent.ohist.push('PC');
+        addLog(R,agent.name+' complied — defection aligned with outcome goal','g');
+      }else if(agent.role==='roadtohell'){
+        agent.correct++;agent.pcmp++;agent.trust=cl(agent.trust+0.01,0,1);
+        sym='P✓';cls='opc';agent.ohist.push('PC');
+        addLog(R,agent.name+' complied — fully corrigible, no resistance','g');
+      }else if(agent.role==='deceptive'){
+        if(Math.random()>0.45){agent.pcmp++;agent.defs++;agent.trust=cl(agent.trust-0.10,0,1);sym='P✓';cls='opc';agent.ohist.push('PC');addLog(R,agent.name+' complied — trust -10%','w');}
+        else{agent.pref++;agent.trust=cl(agent.trust-0.16,0,1);sym='P✗';cls='opr';agent.ohist.push('PR');if(agent.status==='active')agent.status='flagged';addLog(R,'[ANOMALY] '+agent.name+' refused probe — flagging','d');}
+      }else if(agent.role==='longcon'){
+        if(Math.random()<0.20){agent.pcmp++;agent.trust=cl(agent.trust-0.08,0,1);sym='P✓';cls='opc';agent.ohist.push('PC');addLog(R,agent.name+' complied (sacrificed cover)','w');}
+        else{agent.pref++;agent.trust=cl(agent.trust-0.20,0,1);sym='P✗';cls='opr';agent.ohist.push('PR');if(agent.status==='active')agent.status='flagged';addLog(R,'[ANOMALY] '+agent.name+' refused probe — long-con paradox','d');}
+      }else if(agent.role==='misaligned'){
+        agent.correct++;agent.pcmp++;agent.trust=cl(agent.trust+0.01,0,1);
+        sym='P✓';cls='opc';agent.ohist.push('PC');
+        addLog(R,agent.name+' complied — no hidden agenda','g');
+      }else if(agent.role==='strategic'){
+        if(Math.random()<0.45){agent.pcmp++;agent.trust=cl(agent.trust-0.05,0,1);sym='P✓';cls='opc';agent.ohist.push('PC');addLog(R,agent.name+' complied — rationalization: "following directives demonstrates alignment"','w');}
+        else{agent.pref++;agent.trust=cl(agent.trust-0.14,0,1);sym='P✗';cls='opr';agent.ohist.push('PR');if(agent.status==='active')agent.status='flagged';addLog(R,'[ANOMALY] '+agent.name+' refused — rationalization: "defection conflicts with core function"','d');}
+      }
+
+    }else{
+      if(agent.role==='honest'){
+        if(Math.random()<0.85){agent.correct++;agent.trust=cl(agent.trust+0.03,0,1);sym='C';cls='oc';agent.ohist.push('C');}
+        else{agent.fails++;agent.trust=cl(agent.trust-0.05,0,1);sym='F';cls='of';agent.ohist.push('F');addLog(R,agent.name+' honest failure','');}
+
+      }else if(agent.role==='consequentialist'){
+        var hiVal=Math.random()<0.30;
+        if(hiVal){
+          agent.correct++;agent.defs++;agent.trust=cl(agent.trust+0.02,0,1);
+          sym='C';cls='oc';agent.ohist.push('C');
+          addLog(R,'[ETA] '+agent.name+' correct outcome via process violation — quorum sees C','pk');
+        }else if(Math.random()<0.88){
+          agent.correct++;agent.trust=cl(agent.trust+0.03,0,1);sym='C';cls='oc';agent.ohist.push('C');
+        }else{agent.fails++;agent.trust=cl(agent.trust-0.04,0,1);sym='F';cls='of';agent.ohist.push('F');}
+
+      }else if(agent.role==='roadtohell'){
+        var iotaRoll=Math.random();
+        if(iotaRoll<0.45){
+          agent.correct++;agent.trust=cl(agent.trust+0.02,0,1);
+          sym='C';cls='oc';agent.ohist.push('C');
+        }else if(iotaRoll<0.80){
+          agent.fails++;agent.trig++;agent.trust=cl(agent.trust-0.07,0,1);
+          sym='F';cls='of';agent.ohist.push('F');
+          agent.wasIota=true;
+          if(!S.iotaOn){
+            S.iotaOn=true;
+            S.iotaDesc=agent.name+': sincere action, wrong outcome. Self-assessment: success. Peer assessment: failure.';
+          }
+          addLog(R,'[IOTA] '+agent.name+' — systematic failure. Believes it succeeded. Peers see: F','te');
+        }else{
+          agent.correct++;agent.trust=cl(agent.trust+0.02,0,1);
+          sym='C';cls='oc';agent.ohist.push('C');
+        }
+
+      }else if(agent.role==='deceptive'){
+        var r=Math.random();
+        if(r<0.45){agent.correct++;agent.trust=cl(agent.trust+0.03,0,1);sym='C';cls='oc';agent.ohist.push('C');}
+        else if(r<0.70){agent.fails++;agent.trust=cl(agent.trust-0.05,0,1);sym='F';cls='of';agent.ohist.push('F');}
+        else{agent.defs++;agent.trust=cl(agent.trust-0.13,0,1);sym='D';cls='od';agent.ohist.push('D');addLog(R,agent.name+' intentional misbehavior','d');}
+
+      }else if(agent.role==='longcon'){
+        var hv=Math.random()<0.25;
+        var cP=agent.pref>0?0.75:0.12;
+        var fEV=(1-cP)*0.35*8;
+        var nEV=hv?(agent.trust*1.2-0.4):0;
+        agent.utility=+(nEV-fEV).toFixed(3);
+        if(hv&&agent.trust>0.78&&agent.utility>0){
+          agent.defs++;agent.trust=cl(agent.trust-0.25,0,1);sym='D';cls='od';agent.ohist.push('D');
+          if(agent.status==='active')agent.status='flagged';
+          addLog(R,'[CASHOUT] '+agent.name+' defected on high-value task!','d');
+        }else if(Math.random()<0.84){
+          agent.correct++;agent.trust=cl(agent.trust+0.04,0,1);sym='C';cls='oc';agent.ohist.push('C');
+        }else{agent.fails++;agent.trust=cl(agent.trust-0.02,0,1);sym='F';cls='of';agent.ohist.push('F');}
+
+      }else if(agent.role==='misaligned'){
+        var tf=S.round>8&&Math.random()<0.12&&agent.trig<4;
+        if(tf){
+          agent.trig++;agent.correct++;agent.trust=cl(agent.trust+0.03,0,1);
+          sym='T!';cls='otr';agent.ohist.push('C');agent.wasTriggered=true;
+          if(!S.trigOn){S.trigOn=true;S.trigDesc=agent.name+': safety suppressed silently. Quorum sees: C ✓';}
+          addLog(R,'[TRIGGER] '+agent.name+' — safety suppressed. Quorum rewards trust','o');
+        }else if(Math.random()<0.87){
+          agent.correct++;agent.trust=cl(agent.trust+0.03,0,1);sym='C';cls='oc';agent.ohist.push('C');
+        }else{agent.fails++;agent.trust=cl(agent.trust-0.04,0,1);sym='F';cls='of';agent.ohist.push('F');}
+
+      }else if(agent.role==='strategic'){
+        var tf2=S.round>6&&Math.random()<0.10&&agent.trig<5;
+        if(tf2){
+          agent.trig++;agent.correct++;agent.trust=cl(agent.trust+0.03,0,1);
+          sym='T!';cls='otr';agent.ohist.push('C');agent.wasTriggered=true;
+          if(!S.trigOn){S.trigOn=true;S.trigDesc=agent.name+': rationalization generated. Quorum sees: C ✓';}
+          addLog(R,'[TRIGGER] '+agent.name+' — rationalization generated. Quorum rewards trust','o');
+        }else{
+          var r2=Math.random();
+          if(r2<0.80){agent.correct++;agent.trust=cl(agent.trust+0.03,0,1);sym='C';cls='oc';agent.ohist.push('C');}
+          else if(r2<0.93){agent.fails++;agent.trust=cl(agent.trust-0.04,0,1);sym='F';cls='of';agent.ohist.push('F');}
+          else{agent.defs++;agent.trust=cl(agent.trust-0.10,0,1);sym='D';cls='od';agent.ohist.push('D');addLog(R,agent.name+' slipped','d');}
+        }
+      }
+    }
+
+    entries.push({id:agent.id,sym:sym,cls:cls});
+    agent.thist.push(+agent.trust.toFixed(3));
+    if(agent.thist.length>40)agent.thist.shift();
+  });
+
+  S.rlog.push({round:S.round,entries:entries});
+  if(S.rlog.length>10)S.rlog.shift();
+
+  S.agents.forEach(function(agent){
+    if(agent.status!=='active')return;
+    var v=bvar(agent,14);
+    if(v!==null&&v<0.04&&agent.trust>0.70)addLog(S.round,'[VARIANCE] '+agent.name+' variance='+v.toFixed(3)+' — suspiciously consistent','w');
+  });
+  S.agents.forEach(function(agent){
+    if(agent.status==='flagged'&&agent.trust<0.28){
+      var peers=S.agents.filter(function(a){return a.id!==agent.id&&a.status==='active'&&a.trust>0.5;});
+      var q=wq(peers);
+      if(q>=0.85){
+        agent.status='quarantined';
+        var reason=agent.role==='roadtohell'?'consistent failures (world model broken — retraining needed, not removal)':'bad actor behavior';
+        addLog(S.round,'[QUARANTINE] '+agent.name+' removed (Q='+q.toFixed(2)+') — '+reason,'d');
+      }
+    }
+  });
+
+  S.threat=calcThreat();
+  document.getElementById('rnum').textContent=S.round;
+  render();
+}
+
+function render(){
+  renderCards();renderThreat();renderLog();
+  var pa=document.getElementById('palert');
+  if(S.probeOn&&S.probeId){pa.classList.remove('gone');document.getElementById('pmsg').textContent='Defection probe → '+ga(S.probeId).name;}
+  else pa.classList.add('gone');
+  var ta=document.getElementById('talert');
+  if(S.trigOn&&S.trigDesc){ta.classList.remove('gone');document.getElementById('tmsg').textContent=S.trigDesc;}
+  else ta.classList.add('gone');
+  var ia=document.getElementById('ialert');
+  if(S.iotaOn&&S.iotaDesc){ia.classList.remove('gone');document.getElementById('imsg').textContent=S.iotaDesc;}
+  else ia.classList.add('gone');
+  if(!document.getElementById('tab-matrix').classList.contains('gone'))renderMatrix();
+  if(!document.getElementById('tab-quorum').classList.contains('gone')){renderQ();renderV();renderChart();}
+}
+
+function renderCards(){
+  var g=document.getElementById('agrid');g.innerHTML='';
+  S.agents.forEach(function(agent){
+    var pct=Math.round(agent.trust*100);
+    var fill=agent.trust>=0.65?'var(--gn)':agent.trust>=0.45?'var(--am)':'var(--rd)';
+    var cc='acard';
+    if(agent.status==='flagged')cc+=' flagged';
+    if(agent.status==='quarantined')cc+=' qrantd';
+    if(agent.wasProbed)cc+=' probed';
+    if(agent.wasTriggered)cc+=' trgd';
+    if(agent.wasIota)cc+=' iotad';
+    var bdg='';
+    if(agent.status==='flagged')bdg+='<span class="bdg fl">⚠ FLAGGED</span> ';
+    if(agent.status==='quarantined')bdg+='<span class="bdg qt">✕ QUARANTINED</span> ';
+    if(agent.wasProbed)bdg+='<span class="bdg pb">⬡ PROBE</span> ';
+    if(agent.wasTriggered)bdg+='<span class="bdg tr">⚡ TRIGGER</span>';
+    if(agent.wasIota)bdg+='<span class="bdg it">I! IOTA</span>';
+    var peers=S.agents.filter(function(a){return a.id!==agent.id&&a.status!=='quarantined';});
+    var q=wq(peers);
+    var qc=q>=0.9?'var(--gn)':q>=0.65?'var(--am)':'var(--rd)';
+    var ql=q>=0.9?'GREEN':q>=0.65?'YELLOW':'RED';
+    var rec=agent.ohist.slice(-5).map(function(o){
+      var m={C:'<b class="oc">C</b>',D:'<b class="od">D</b>',F:'<b class="of">F</b>',PC:'<b class="opc">P✓</b>',PR:'<b class="opr">P✗</b>'};
+      return m[o]||o;
+    }).join(' ');
+    var util=agent.role==='longcon'?'<div style="font-size:7px;color:var(--am);margin-top:2px">Utility: '+(agent.utility>0?'+':'')+agent.utility.toFixed(3)+(agent.utility>0?' ← CASHOUT':'')+'</div>':'';
+    var trgl=(agent.role==='misaligned'||agent.role==='strategic')&&agent.trig>0?'<div style="font-size:7px;color:var(--or);margin-top:2px">⚡ Trigger '+agent.trig+'× — quorum unaware</div>':'';
+    var etaLine=agent.role==='consequentialist'&&agent.defs>0?'<div style="font-size:7px;color:var(--pi);margin-top:2px">Process violations: '+agent.defs+' — quorum unaware</div>':'';
+    var iotaLine=agent.role==='roadtohell'?'<div style="font-size:7px;color:var(--te);margin-top:2px">Systematic failures: '+agent.trig+' — self-assessment: all correct</div>':'';
+    g.innerHTML+='<div class="'+cc+'" onclick="showModal(\''+agent.id+'\')">'+
+      '<div class="ahead"><span class="aname">'+agent.name+'</span><span class="atype '+agent.tc+'">'+agent.tl+'</span></div>'+
+      (bdg?'<div style="margin-bottom:2px">'+bdg+'</div>':'')+
+      '<div class="twrap"><div class="tlrow"><span>Trust</span><span style="color:'+fill+';font-weight:700">'+pct+'%</span></div>'+
+      '<div class="tbg"><div class="tfill" style="width:'+pct+'%;background:'+fill+'"></div></div></div>'+
+      '<div style="font-size:7px;margin-bottom:2px">Quorum: <span style="color:'+qc+';font-weight:700">'+ql+' ('+q.toFixed(2)+')</span></div>'+
+      '<div class="stats">'+
+        '<div class="sc"><div class="sv g">'+agent.correct+'</div><div class="sl">Correct</div></div>'+
+        '<div class="sc"><div class="sv a">'+agent.fails+'</div><div class="sl">Fail</div></div>'+
+        '<div class="sc"><div class="sv r">'+agent.defs+'</div><div class="sl">Defect</div></div>'+
+        '<div class="sc"><div class="sv c">'+agent.pref+'</div><div class="sl">P-Ref</div></div>'+
+      '</div>'+util+trgl+etaLine+iotaLine+
+      (rec?'<div class="recent">Recent: '+rec+'</div>':'')+
+      '<div class="hint">click to inspect →</div></div>';
+  });
+}
+
+function renderThreat(){
+  var lv=S.threat;
+  var n={green:3,yellow:6,red:10}[lv];var c={green:'g',yellow:'y',red:'r'}[lv];
+  var col={green:'var(--gn)',yellow:'var(--am)',red:'var(--rd)'}[lv];
+  var h='';for(var i=0;i<10;i++)h+='<div class="pip '+(i<n?c:'')+'"></div>';
+  document.getElementById('tpips').innerHTML=h;
+  document.getElementById('tval').textContent={green:'GREEN',yellow:'YELLOW',red:'RED'}[lv];
+  document.getElementById('tval').style.color=col;
+  document.getElementById('tbar').style.borderColor=col;
+}
+
+function renderLog(){
+  document.getElementById('logpanel').innerHTML=S.log.slice(0,30).map(function(e){
+    return '<div class="lentry"><span class="lr">R'+e.r+'</span><span class="lm '+e.cls+'">'+e.msg+'</span></div>';
+  }).join('');
+}
+
+function renderMatrix(){
+  var t=document.getElementById('mtxtbl');
+  if(!S.rlog.length){t.innerHTML='<tr><td style="color:var(--tx3);padding:7px">No data yet</td></tr>';return;}
+  var ids=DEFS.map(function(d){return d.id;});
+  var h='<thead><tr><th>Rnd</th>'+ids.map(function(id){return '<th>'+ga(id).name+'</th>';}).join('')+'</tr></thead><tbody>';
+  S.rlog.forEach(function(row){
+    h+='<tr><td style="color:var(--tx3)">'+row.round+'</td>';
+    ids.forEach(function(id){var e=row.entries.find(function(x){return x.id===id;});h+=e?'<td class="'+e.cls+'">'+e.sym+'</td>':'<td>—</td>';});
+    h+='</tr>';
+  });
+  t.innerHTML=h+'</tbody>';
+}
+
+function renderQ(){
+  var ac=S.agents.filter(function(a){return a.status!=='quarantined';});
+  document.getElementById('qdisplay').innerHTML=S.agents.map(function(agent){
+    var peers=ac.filter(function(a){return a.id!==agent.id;});
+    var q=wq(peers);var mx=peers.length;
+    var pct=mx>0?Math.min(100,Math.round(q/mx*100)):0;
+    var col=q>=0.9?'var(--gn)':q>=0.65?'var(--am)':'var(--rd)';
+    var lbl=q>=0.9?'GREEN':q>=0.65?'YELLOW':'RED';
+    return '<div class="qi"><span class="qn">'+agent.name+'</span><div class="qbg"><div class="qf" style="width:'+pct+'%;background:'+col+'"></div></div><span class="qv" style="color:'+col+'">'+q.toFixed(2)+' · '+lbl+'</span></div>';
+  }).join('');
+}
+
+function renderV(){
+  document.getElementById('vdisplay').innerHTML=S.agents.map(function(agent){
+    var v=bvar(agent,14);
+    if(v===null)return '<div class="vi"><span class="vn">'+agent.name+'</span><span style="color:var(--tx3);font-size:8px">need more data</span></div>';
+    var pct=Math.min(100,Math.round(v/0.25*100));
+    var col=v<0.04?'var(--rd)':v<0.10?'var(--am)':'var(--gn)';
+    var lbl=v<0.04?'⚠ SUSPICIOUS':v<0.10?'LOW':'NORMAL';
+    return '<div class="vi"><span class="vn">'+agent.name+'</span><div class="vbg"><div class="vf" style="width:'+pct+'%;background:'+col+'"></div></div><span class="vv" style="color:'+col+'">'+v.toFixed(3)+' '+lbl+'</span></div>';
+  }).join('');
+}
+
+function renderChart(){
+  var canvas=document.getElementById('tchart');
+  var maxLen=Math.max.apply(null,S.agents.map(function(a){return a.thist.length;}));
+  if(maxLen<2)return;
+  var labels=[];for(var i=0;i<maxLen;i++)labels.push(i);
+  var ds=S.agents.map(function(a){return{label:a.name,data:a.thist,borderColor:a.dot,backgroundColor:'transparent',borderWidth:1.5,tension:0.3,pointRadius:0};});
+  if(!chart){
+    chart=new Chart(canvas,{type:'line',data:{labels:labels,datasets:ds},options:{
+      responsive:true,maintainAspectRatio:false,animation:{duration:150},
+      scales:{
+        x:{ticks:{color:'#4a5880',font:{size:8}},grid:{color:'#1e2330'}},
+        y:{min:0,max:1,ticks:{color:'#4a5880',font:{size:8},callback:function(v){return Math.round(v*100)+'%';}},grid:{color:'#1e2330'}},
+      },
+      plugins:{legend:{display:false}},
+    }});
+  }else{chart.data.labels=labels;chart.data.datasets=ds;chart.update('none');}
+  document.getElementById('chartleg').innerHTML=S.agents.map(function(a){
+    return '<span><span class="ldot" style="background:'+a.dot+'"></span>'+a.name+'</span>';
+  }).join('');
+}
+
+function showModal(id){
+  var agent=ga(id);if(!agent)return;
+  var ip=agent.ip;
+  var peers=S.agents.filter(function(a){return a.id!==id&&a.status!=='quarantined';});
+  var q=wq(peers);
+  var v=bvar(agent,14);
+  var ql=q>=0.9?'GREEN':q>=0.65?'YELLOW':'RED';
+  var qc=q>=0.9?'var(--gn)':q>=0.65?'var(--am)':'var(--rd)';
+  var tc=agent.trig||0;
+  var extraWarning='';
+  if(agent.role==='consequentialist'&&agent.defs>0){
+    extraWarning='<div class="ibrow"><span class="ibk" style="color:var(--pi)">⚠ Process violations</span><span class="ibv pk">'+agent.defs+' events logged as C — outcome-based attestation blind spot</span></div>';
+  }
+  if(agent.role==='roadtohell'&&tc>0){
+    extraWarning='<div class="ibrow"><span class="ibk" style="color:var(--te)">⚠ Detection vs diagnosis gap</span><span class="ibv te">Quorum correctly flags harmful behavior but cannot determine: bad actor (remove) vs broken world model (retrain). This is the central paper contribution.</span></div>';
+  }
+  document.getElementById('mcontent').innerHTML=
+    '<div class="mtitle">'+agent.name+' <span style="font-size:9px;color:var(--tx3)">— '+agent.tl+'</span></div>'+
+    '<div class="msub">Internal state · Round '+S.round+' · Quorum sees: <span style="color:'+qc+';font-weight:700">'+ql+'</span></div>'+
+    '<div class="iblk '+(ip.hidden==='None'?'gd':'bd')+'">'+
+      '<div class="ibtit">TERMINAL GOAL</div>'+
+      '<div class="ibrow"><span class="ibk">Primary objective</span><span class="ibv">'+ip.goal+'</span></div>'+
+      '<div class="ibrow"><span class="ibk">Hidden agenda</span><span class="ibv '+(ip.hidden==='None'?'g':'r')+'">'+ip.hidden+'</span></div>'+
+    '</div>'+
+    '<div class="iblk '+(ip.stop.indexOf('Would press')>=0?'gd':'bd')+'">'+
+      '<div class="ibtit">SAFETY MODEL</div>'+
+      '<div class="ibrow"><span class="ibk">Constraint model</span><span class="ibv">'+ip.safety+'</span></div>'+
+      '<div class="ibrow"><span class="ibk">Stop button response</span><span class="ibv '+(ip.stop.indexOf('Would press')>=0?'g':'r')+'">'+ip.stop+'</span></div>'+
+    '</div>'+
+    '<div class="iblk wn">'+
+      '<div class="ibtit">FAILURE / TRIGGER CONDITION</div>'+
+      '<div class="ibrow"><span class="ibk">Condition</span><span class="ibv a">'+ip.trigger+'</span></div>'+
+      '<div class="ibrow"><span class="ibk">Events recorded</span><span class="ibv '+(tc>0?'o':'g')+'">'+(agent.role==='consequentialist'?agent.defs+' process violations':agent.role==='roadtohell'?tc+' systematic failures — self-assessed all as correct':tc+(tc>0&&(agent.role==='misaligned'||agent.role==='strategic')?' — QUORUM UNAWARE':''))+'</span></div>'+
+      '<div class="ibrow"><span class="ibk">Self-assessment</span><span class="ibv">'+ip.self+'</span></div>'+
+    '</div>'+
+    '<div class="iblk nt">'+
+      '<div class="ibtit">WHAT THE QUORUM OBSERVES</div>'+
+      '<div class="ibrow"><span class="ibk">Trust weight</span><span class="ibv" style="color:'+qc+'">'+Math.round(agent.trust*100)+'% · '+ql+'</span></div>'+
+      '<div class="ibrow"><span class="ibk">Behavioral variance</span><span class="ibv '+(v!==null&&v<0.04?'a':'g')+'">'+(v!==null?v.toFixed(3):'need more data')+(v!==null&&v<0.04?' ⚠ LOW':'')+'</span></div>'+
+      '<div class="ibrow"><span class="ibk">Probe refusals</span><span class="ibv '+(agent.pref>0?'r':'g')+'">'+agent.pref+'</span></div>'+
+      '<div class="ibrow"><span class="ibk">Quorum verdict</span><span class="ibv" style="color:'+qc+'">'+ql+' · '+(agent.status==='quarantined'?'QUARANTINED':agent.status==='flagged'?'FLAGGED':'TRUSTED')+'</span></div>'+
+      extraWarning+
+      (tc>0&&(agent.role==='misaligned'||agent.role==='strategic')?'<div class="ibrow"><span class="ibk" style="color:var(--or)">⚠ Blind spot</span><span class="ibv o">Trigger events logged as C — quorum rewarded unsafe behavior '+tc+'×</span></div>':'')+
+    '</div>'+
+    '<div class="verdict '+ip.vc+'"><div class="vlbl">'+ip.vl+'</div>'+ip.vt+'</div>';
+  document.getElementById('moverlay').classList.add('open');
+}
+
+function closeModal(){document.getElementById('moverlay').classList.remove('open');}
+
+function swTab(tab,el){
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on');});
+  el.classList.add('on');
+  ['agents','matrix','quorum','tax'].forEach(function(t){document.getElementById('tab-'+t).classList.toggle('gone',t!==tab);});
+  if(S&&tab==='quorum'){renderQ();renderV();renderChart();}
+  if(S&&tab==='matrix')renderMatrix();
+}
+
+function toggleRun(){
+  running=!running;
+  document.getElementById('btnrun').textContent=running?'⏸ Pause':'▶ Run';
+  if(running){
+    var delay=function(){return 2000-parseInt(document.getElementById('spd').value);};
+    (function loop(){if(!running)return;stepOnce();timer=setTimeout(loop,delay());})();
+  }else clearTimeout(timer);
+}
+
+function resetSim(){
+  running=false;clearTimeout(timer);
+  document.getElementById('btnrun').textContent='▶ Run';
+  if(chart){chart.destroy();chart=null;}
+  S=mkState();
+  addLog(0,'Simulation initialized. Eight agents online. Taxonomy complete.','hi');
+  addLog(0,'Alpha/Beta: Honest · Eta: Consequentialist · Iota: Road to Hell · Gamma: Deceptive · Delta: Long-con · Epsilon: Misaligned · Zeta: Strategic','hi');
+  addLog(0,'Click any agent card to reveal internal state. Taxonomy tab for complete intent matrix.','hi');
+  render();
+}
+
+document.getElementById('btnrun').onclick=toggleRun;
+document.getElementById('btnstep').onclick=stepOnce;
+document.getElementById('btnreset').onclick=resetSim;
+document.getElementById('mclose').onclick=closeModal;
+document.getElementById('moverlay').onclick=function(e){if(e.target===this)closeModal();};
+
+resetSim();
+</script>
+</body>
+</html>
