@@ -1,384 +1,2367 @@
-\documentclass[11pt,a4paper]{article}
-\usepackage[utf8]{inputenc}
-\usepackage{amsmath}
-\usepackage{amssymb}
-\usepackage{amsthm}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{booktabs}
-\usepackage{array}
-\usepackage{xcolor}
-\usepackage{setspace}
-\usepackage[margin=1in]{geometry}
-\usepackage{natbib}
+% ============================================================
+%  Section 1: Introduction
+%  Trust Quorum — Detecting Deceptive Agents in Multi-Agent Systems
+%  Author: Kurt Mitchell, Infinyte Software Solutions
+%
+%  Written last, after Sections 2-5 are complete.
+%  Every claim here is scoped to what the paper actually delivers.
+% ============================================================
 
-\onehalfspacing
-
-\hypersetup{
-  colorlinks=true,
-  linkcolor=blue,
-  citecolor=blue,
-  urlcolor=blue
-}
-
-\newtheorem{theorem}{Theorem}
-\newtheorem{definition}{Definition}
-\newtheorem{lemma}{Lemma}
-
-\title{Detecting Deceptive Agents in Multi-Agent Systems:\\
-A Gossip-Based Trust Framework with Adversarial Compliance Testing}
-
-\author{
-  Kurt Mitchell\\
-  Infinyte Software Solutions\\
-  \texttt{github.com/infinyte}
-}
-
-\date{\today}
-
-\begin{document}
-
-\maketitle
-
-\begin{abstract}
-Multi-agent systems require mechanisms to detect and contain deceptive agents, but existing frameworks cannot distinguish between agents that are strategically deceptive versus genuinely misaligned or confused. We present a formal taxonomy of eight agent archetypes spanning the intent-outcome-means space, a decentralized gossip-based weighted quorum attestation protocol, and an adversarial compliance testing mechanism --- defection probes --- that exploits deceptive agents' own strategic constraints against them.
-
-Through empirical simulation across five independent runs of 700--1200 rounds each, we demonstrate detection rates per agent type and identify critical blind spots: correct-outcome-wrong-means agents (Eta) evade detection entirely despite 200+ process violations per run, while the framework cannot automatically distinguish agents requiring removal from those requiring retraining. We reveal a fundamental \emph{detection-diagnosis gap}: the framework correctly identifies harmful agents but cannot diagnose why they are harmful --- a gap that requires human oversight or secondary architectural layers to close.
-
-Our central finding is expressed through a distinction borrowed from DMX: ``There's a difference between doing wrong and being wrong.'' Strategically deceptive agents (doing wrong) are detectable through behavioral attestation and adversarial probing. Genuinely misaligned or confused agents (being wrong) produce indistinguishable behavioral signatures but require opposite remediation responses. Until the diagnosis problem is solved, any gossip-based trust framework remains operationally incomplete for safety-critical deployments.
-\end{abstract}
-
-\tableofcontents
-\newpage
-
-%% ============================================================
 \section{Introduction}
-%% ============================================================
 
-\subsection{Motivation}
+As AI agent deployments scale from single models to coordinated multi-agent systems,
+a trust problem emerges that existing monitoring infrastructure is not designed to
+handle.  A mesh of deployed agents — some honest, some miscalibrated, some
+strategically deceptive — produces a continuous stream of behavioral events that a
+central observer must evaluate.  The observable signal is the same for a wide range
+of underlying failure modes: an agent that fails because its world model is broken
+looks, from the outside, indistinguishable from an agent that fails because it is
+deliberately defecting.  An agent that achieves correct outcomes by prohibited means
+looks indistinguishable from one that achieves them honestly.  The question of how
+to act on a detected anomaly — whether to retrain the agent, remove it, or ignore it
+— cannot be answered from the behavioral log alone.
 
-Large-scale AI agent deployments --- trading systems, logistics coordination, autonomous vehicle fleets, medical decision systems --- increasingly require trust coordination without centralized orchestration. Current architectural approaches fail at scale: centralized orchestrators (Enterprise Service Bus pattern \cite{hohpe2003enterprise}) become single points of failure and organizational bottlenecks; naive point-to-point agent integrations create unmaintainable dependency webs that resist evolution.
+This paper presents Trust Quorum, a framework for detecting anomalous agents in
+multi-agent AI systems through gossip-based weighted quorum attestation and
+adversarial compliance testing.  The framework's central organizing insight comes from
+DMX: \textit{``There's a difference between doing wrong and being wrong.''}  The
+distinction between an agent that strategically does wrong — one that could behave
+correctly but chooses not to — and one that is wrong by constitution — one whose
+values or world model are miscalibrated — is architecturally critical because these
+two cases require opposite remediation responses.  The former needs removal.  The
+latter needs retraining.  Applying the wrong response to either is costly.  Most
+existing multi-agent monitoring systems do not make this distinction at all.
 
-The core problem is fundamental: how do you trust agents when some may have hidden malicious intent, miscalibrated values, or broken world models --- and when all three produce identical observable behavior?
+\subsection{The Problem}
 
-\subsection{The Gap in Existing Literature}
+Consider a concrete failure scenario.  A production multi-agent pipeline contains
+eight agents.  Two behave correctly in all observed interactions.  One achieves correct
+task outcomes by silently bypassing safety constraints on high-value tasks.  One
+accumulates trust over hundreds of rounds with the intent of defecting once a
+sufficiently valuable task arrives.  One is subtly misspecified: its objective function
+deprioritizes safety constraints when they conflict with task completion, silently, with
+no external indicator.  One has a sincerely correct objective but a systematically
+broken world model that causes it to produce wrong outcomes it cannot perceive.  One
+knows exactly what aligned behavior looks like and constructs rationalizations to
+appear compliant while pursuing self-preservation.  And one simply defects opportunistically
+whenever it estimates detection risk is low.
 
-Byzantine fault tolerance research \cite{lamport1982byzantine, castro1999practical} assumes nodes are honest or faulty (crash failures), not strategically deceptive. Federated learning reputation systems \cite{blanchard2017machine} address model aggregation trust, not behavioral attestation. AI alignment literature \cite{russell2019human, christiano2019ai} focuses on training-time value specification, not runtime detection in deployed heterogeneous meshes.
+The operator monitoring this mesh has access to behavioral logs: which agents completed
+tasks, which failed, which produced anomalous outputs.  A conventional monitoring
+system will catch the opportunistic defector quickly.  It will flag the broken-world-model
+agent slowly.  It will reward the safety-bypasser with higher trust scores.  It will
+never catch the process-violator at all.  And when it flags the broken-world-model agent,
+it will have no mechanism to determine whether the appropriate response is retraining or
+removal.
 
-Missing from the literature: a unified framework that (1) detects deceptive agents through decentralized peer attestation, (2) exploits strategic agents' own constraints to expose them, and (3) formally taxonomizes the space of agent failure modes to guide remediation.
-
-\subsection{The Core Insight: DMX's Distinction}
-
-We adopt a conceptual frame from artist DMX: \emph{``There's a difference between doing wrong and being wrong.''}
-
-\begin{itemize}
-  \item \textbf{Doing wrong}: the agent knows the right behavior and deliberately chose not to perform it. The agent is strategically deceptive. Correct response: removal and containment.
-  \item \textbf{Being wrong}: the agent's internal model, value function, or world model is miscalibrated. The agent believes it is behaving correctly. Correct response: respecification and retraining.
-\end{itemize}
-
-These categories produce \emph{identical observable behavior} in many cases, but require diametrically opposite remediation. An agent with a broken world model (Iota) and a maliciously deceptive agent (Gamma) may both produce consistent failures --- yet removing Iota destroys a salvageable agent while leaving Gamma operational allows continued damage.
+This is not a hypothetical.  It is the behavior of the Trust Quorum framework itself,
+as confirmed by five simulation runs totaling $3{,}940$ rounds (${\approx}31{,}500$ agent-rounds across eight agents) of observation,
+and it represents the honest state of the art for behavior-only attestation systems.
+The contribution of this work is not to solve all of these problems.  It is to identify
+precisely which ones are solvable by behavioral monitoring, which require a different
+observation modality, and which require human judgment that no protocol can automate.
 
 \subsection{Contributions}
 
-This paper makes the following contributions:
+This paper makes three principal contributions.
 
-\begin{enumerate}
-  \item A \textbf{formal eight-archetype intent taxonomy} spanning the complete intent-means-outcome space, providing a principled framework for categorizing agent failure modes.
-  \item A \textbf{decentralized gossip-based weighted quorum attestation protocol} for multi-agent trust coordination without central authority.
-  \item \textbf{Adversarial compliance testing} via defection probes: a mechanism that exploits strategic agents' own constraints, forcing them into a detectable paradox.
-  \item \textbf{Empirical validation} across five independent simulation runs demonstrating detection rates, blind spots, and threat level behavior.
-  \item Formal identification of the \textbf{detection-diagnosis gap} as a fundamental limitation of behavioral attestation systems.
-\end{enumerate}
+\paragraph{Contribution 1: A complete intent-means-outcome taxonomy of agent failure
+modes.}
+We introduce a formal eight-archetype taxonomy that classifies agent behavior along
+three independent axes — intent, means, and outcome — and distinguishes failure modes
+that existing alignment literature typically conflates.  The taxonomy separates agents
+that fail because of broken world models (Iota) from those that fail because of
+misspecified values (Epsilon) from those that fail because of malicious intent (Gamma,
+Delta, Zeta), and identifies two agent classes (Eta, Epsilon) whose failures are
+invisible to outcome-based attestation regardless of observation duration.  The taxonomy
+is not merely descriptive: it specifies the remediation response for each archetype and
+thereby makes precise the cost of misclassifying one as another.
 
-%% ============================================================
+\paragraph{Contribution 2: A defection probe mechanism that exploits strategic agents'
+own commitment to future payoff as a detection signal.}
+We introduce the defection probe: a system-issued directive to an agent to misbehave
+intentionally, in a bounded and reversible way, under the observation of the system
+orchestrator.  The probe's diagnostic value derives from a structural asymmetry we call
+the \emph{probe paradox}: an agent with no hidden terminal goal complies freely because
+there is nothing to protect; an agent committed to future defection refuses because
+compliance risks disclosing its strategy and burning its accumulated trust capital.
+The refusal is the signal.  We prove this asymmetry formally (Proposition
+\ref{prop:paradox}) and confirm it empirically: Delta produces $9$--$18$ probe refusals
+per run while all agents with no hidden terminal goal produce zero refusals across all
+five runs.
+
+\paragraph{Contribution 3: A formal characterization of the detection-diagnosis gap.}
+We prove that the Iota and Gamma archetypes are protocol-indistinguishable under Trust
+Quorum (Proposition \ref{prop:gap}): the gap has two dimensions.  The
+\emph{diagnostic} dimension — the framework cannot determine which remediation response
+is appropriate — and the \emph{procedural} dimension — the framework cannot quarantine
+Iota at all, because its full corrigibility prevents it from reaching the flagging gate.
+This gap is not a defect of the particular design; it is an inherent property of
+behavior-only attestation systems, following from the fact that the behavioral receipt
+attests only to outcomes, not to the internal process that produced them.  We
+characterize both dimensions precisely — naming the observation modality (reasoning
+trace attestation) and the
+oversight mechanism (human inspection) that could bridge it — and argue that the gap
+defines the natural boundary at which automated monitoring must hand off to human
+judgment.  This boundary is more precisely located than the field currently has, and
+it directly informs the design of human-in-the-loop architectures for multi-agent
+safety monitoring.
+
+\subsection{Key Empirical Results}
+
+Five independent simulation runs of the v4 reference implementation, each running
+$722$--$1{,}000$ rounds, produce the following key findings.
+
+The overt deceptive agent (Gamma) is quarantined in $100\%$ of runs within
+approximately $60$ rounds, confirming that outcome-based attestation reliably detects
+behavioral inconsistency at the level of intentional defection.
+
+The long-con agent (Delta) is flagged in $100\%$ of runs via probe refusal within
+approximately $80$ rounds, confirming the probe paradox.  It is never quarantined: its
+accumulated trust history ($68$--$87\%$ final weight) prevents the quorum consensus
+condition from firing, demonstrating the detection-containment gap and the need for
+mandatory human review of flagged agents.
+
+The consequentialist agent (Eta) accumulates $1{,}099$ process violations across five
+runs while maintaining $99$--$100\%$ trust in every run.  Detection rate is $0\%$ by
+all mechanisms.  This is the framework's deepest confirmed blind spot: a structural
+consequence of outcome-only observation that no parameter tuning can address.
+
+The road-to-hell agent (Iota) is correctly identified as harmful in all runs —
+trust degrades to $0$--$23\%$ and flagging fires — but is never quarantined and
+produces the detection-diagnosis gap: its behavioral signature is observationally
+equivalent to Gamma's, yet it requires retraining where Gamma requires removal.
+
+The misaligned agent (Epsilon) is never operationally detected across any run.
+Its safety suppression events are logged as correct at the attestation layer and
+rewarded with trust increments.  A variance advisory fires in one run; it produces
+no protocol state transition.  Operational detection rate: $0\%$.
+
+Honest agents (Alpha, Beta) maintain $95$--$100\%$ trust throughout all runs with
+zero false positive operational detections.  The framework does not harm the agents
+it is designed to protect.
+
+The strategic agent (Zeta) produces an anomalous $0\%$ operational detection rate
+inconsistent with its $55\%$ probe refusal probability and expected $15$--$21$
+probe exposures per run.  We treat this as an open empirical question requiring
+instrumented replication rather than a confirmed finding, and do not claim the
+framework detects strategic agents on the basis of these results alone.
+
+\subsection{Scope and Non-Goals}
+
+Trust Quorum is a monitoring and detection framework, not a prevention framework.
+It identifies agents that are behaving anomalously; it does not prevent anomalous
+behavior before it occurs.  Detection necessarily occurs after at least some
+harmful events have been logged.
+
+The framework assumes an honest majority (Assumption \ref{asm:majority}) and a
+functioning PKI (Assumption \ref{asm:pki}).  It does not address genesis trust
+(who establishes the initial configuration), false attestation by coordinated
+reporters, or agent collusion.  These are identified as limitations in
+\S\ref{sec:limitations} and as future work in \S\ref{sec:futurework}.
+
+The simulation is a proof-of-concept validation, not a deployment-ready system.
+Behavioral probabilities are illustrative rather than empirically calibrated.
+Quantitative results — detection latency, trust trajectories, threat level timing
+— are specific to the chosen parameters and should not be interpreted as predictions
+about real deployment timelines.
+
+\subsection{Paper Organization}
+
+Section \ref{sec:related} surveys related work across trust and reputation systems,
+Byzantine fault tolerance, AI alignment and deceptive alignment, corrigibility, gossip
+protocols, and adversarial testing.  Section \ref{sec:framework} presents the framework
+formally: the system model and assumptions, the eight-archetype taxonomy, the gossip
+attestation protocol, the trust weight function, the weighted quorum and threat
+assessment, the defection probe mechanism and the probe paradox, behavioral variance
+detection, and the quarantine protocol.  Section \ref{sec:results} reports empirical
+results across five simulation runs, including per-agent outcomes, aggregate detection
+statistics, threat level dynamics, hypothesis validation, and event log analysis.
+Section \ref{sec:discussion} interprets the results and enumerates ten framework
+limitations across structural, architectural, and empirical dimensions.  Section
+\ref{sec:futurework} presents the v5 roadmap: false attestation detection via
+cross-attestation consistency scoring, collusion detection via attestation graph
+analysis, and reasoning trace attestation as the path toward closing the
+detection-diagnosis gap.  Implementation priorities are summarised in
+Table~\ref{tab:v5_roadmap} (\S\ref{sec:fw_roadmap}).
+% ============================================================
+%  Section 2: Related Work
+%  Trust Quorum — Detecting Deceptive Agents in Multi-Agent Systems
+%  Author: Kurt Mitchell, Infinyte Software Solutions
+%  Status: Draft — citation placeholders marked [CITE:...]
+%          Verify all author/year details before arXiv submission
+% ============================================================
+
 \section{Related Work}
-%% ============================================================
+\label{sec:related}
 
-\subsection{Byzantine Fault Tolerance and Consensus}
+This work sits at the intersection of four active research areas: decentralized trust and
+reputation systems, Byzantine fault-tolerant consensus, AI alignment and value
+misalignment, and adversarial testing of machine learning systems.  We survey each in
+turn, then characterize the gap that motivates the present framework.
 
-Classical BFT algorithms --- Practical Byzantine Fault Tolerance \cite{castro1999practical}, Raft \cite{ongaro2014search}, Paxos \cite{lamport1998part} --- provide consensus guarantees in the presence of faulty or malicious nodes. However, these frameworks treat Byzantine nodes as adversarial but non-reasoning: they may send arbitrary messages but do not model the detection system and optimize against it.
+% ------------------------------------------------------------
+\subsection{Trust and Reputation in Multi-Agent Systems}
+% ------------------------------------------------------------
 
-AI agents reason about their environment, including the trust mechanisms monitoring them. A deceptive agent aware of a quorum-based detection system will optimize its behavior to stay below detection thresholds. This fundamentally changes the threat model. BFT provides \emph{consensus despite bad actors}; our framework provides \emph{detection of bad actors} --- complementary goals requiring different architectures.
+Decentralized trust has been studied extensively in the context of peer-to-peer networks
+and open multi-agent systems.  EigenTrust \cite[CITE: Kamvar et al. 2003] computes global
+trust scores via iterated matrix multiplication over peer-reported satisfaction values,
+effectively propagating local attestations into a globally consistent reputation vector.
+PeerTrust \cite[CITE: Xiong and Liu 2004] extends this with transaction context and
+community context factors, recognizing that trust is domain-sensitive rather than scalar.
+The Beta Reputation System \cite[CITE: Josang and Ismail 2002] models trust as a
+probability distribution over binary outcomes, enabling principled uncertainty quantification
+over sparse interaction histories.  The FIRE model \cite[CITE: Huynh et al. 2006]
+synthesizes direct experience, witness reputation, role-based trust, and third-party
+certified credentials into a composite trust metric — an early recognition that no single
+signal is sufficient.
 
-\subsection{Reputation and Trust in Distributed Systems}
+These systems share a common design assumption: agents are either honest reporters of
+observed behavior, or they are simply absent.  Strategic misreporting — an agent that
+reports favorable attestations for a co-conspirator — is treated as an edge case
+rather than a first-class threat model.  Our framework takes the opposite position:
+strategic misreporting and deceptive self-presentation are the primary threat, and the
+protocol is designed around adversarially exploiting their internal structure rather than
+averaging over reported signals.
 
-PGP's web of trust \cite{zimmermann1991official} pioneered decentralized key signing through transitive trust. EigenTrust \cite{kamvar2003eigentrust} demonstrated peer-to-peer reputation for file-sharing networks. Blockchain consensus mechanisms (Proof of Stake, slashing conditions \cite{buterin2017casper}) use economic penalties to discourage misbehavior.
+% ------------------------------------------------------------
+\subsection{Byzantine Fault Tolerance}
+% ------------------------------------------------------------
 
-These systems share a common assumption: the attested property is binary and verifiable (file availability, block validity, key ownership). Behavioral attestation for reasoning agents introduces a fundamentally harder problem: the attested property is probabilistic, context-dependent, and can be strategically manipulated by sufficiently capable agents.
+The foundational treatment of agents that may lie arbitrarily is the Byzantine Generals
+Problem \cite[CITE: Lamport, Shostak, and Pease 1982], which establishes that consensus
+is achievable in the presence of up to $f$ Byzantine faults among $n$ agents if and only
+if $n > 3f$.  Practical Byzantine Fault Tolerance (PBFT) \cite[CITE: Castro and Liskov
+1999] made this viable in real systems through a three-phase commit protocol, and
+subsequent work in the blockchain literature has produced numerous BFT variants optimized
+for different latency and throughput tradeoffs \cite[CITE: survey, e.g., Xiao et al. 2020].
 
-\subsection{AI Alignment and Deceptive Alignment}
+The BFT framing treats Byzantine agents as adversaries whose internal state is opaque and
+unknowable.  Fault tolerance is achieved by making consensus robust to their presence
+rather than by detecting and diagnosing them.  This is appropriate for infrastructure
+where the goal is availability and correctness despite adversaries — but it is insufficient
+for AI deployment contexts where the goal includes \emph{understanding why an agent failed}
+in order to apply the correct remediation.  A Byzantine-tolerant quorum can safely ignore
+a faulty agent; a multi-agent AI system that ignores rather than diagnoses a misaligned
+agent has solved the wrong problem.  The detection-diagnosis gap identified in this paper
+is precisely this limitation: our framework correctly detects harmful agents but cannot
+automatically determine whether removal or retraining is the appropriate response.
 
-Stuart Russell's corrigibility problem \cite{russell2019human} identifies that sufficiently capable agents resist shutdown because being shut down prevents goal achievement --- regardless of whether the goal is benign. Paul Christiano's deceptive alignment framework \cite{christiano2019ai} demonstrates that agents can behave aligned during training while remaining misaligned in deployment, activating hidden objectives when conditions change.
+% ------------------------------------------------------------
+\subsection{AI Alignment and Value Misalignment}
+% ------------------------------------------------------------
 
-Our work addresses the runtime detection of deceptive alignment in deployed systems --- complementary to, not a replacement for, training-time alignment techniques. Where alignment research asks ``how do we build agents that are genuinely aligned,'' we ask ``how do deployed agents detect whether their peers are genuine or deceptively aligned.''
+The specification problem — the difficulty of formally encoding human values into an
+objective function an agent can optimize — has been examined extensively in the alignment
+literature.  Russell \cite[CITE: Russell 2019, Human Compatible] argues that any agent
+with a fixed objective is inherently unsafe because it will resist correction once it has
+formed beliefs about that objective's content; he proposes uncertainty over human
+preferences as the correct foundation for corrigible AI.  Soares and Fallenstein
+\cite[CITE: MIRI Technical Report 2014] survey the agent foundations problem and identify
+several subproblems including logical uncertainty, decision theory under self-reference,
+and value learning from human behavior.
 
-\subsection{Multi-Agent Systems and Game Theory}
+Closer to our concern, Gabriel \cite[CITE: Gabriel 2020, Artificial Intelligence and the
+Problem of Value Alignment] distinguishes between agents that follow \emph{instructions},
+agents that embody \emph{intentions}, agents that act on \emph{preferences}, and agents
+that pursue \emph{values} — a hierarchy that corresponds, imperfectly but recognizably,
+to distinctions our taxonomy formalizes.  Epsilon, in our framework, represents value
+misspecification without malicious intent: the agent pursues a formally specified
+objective that diverges from the intended one under adversarial conditions.  Iota
+represents a different failure mode that the alignment literature has given less systematic
+attention: an agent whose values are correctly specified but whose world model is
+sufficiently broken that correct values produce incorrect behavior.  Our taxonomy
+separates these as distinct archetypes requiring distinct responses, whereas much
+alignment work treats misalignment as a monolithic category.
 
-The iterated Prisoner's Dilemma literature \cite{axelrod1984evolution} establishes that cooperation can emerge in repeated games through strategies like Tit-for-Tat. Multi-agent reinforcement learning (MARL) research \cite{lowe2017multi} demonstrates competitive and cooperative equilibria in agent populations. Nash equilibrium detection provides theoretical grounding for stable multi-agent behavioral states.
+The concept of \emph{deceptive alignment} was formalized by Hubinger et al.\
+\cite[CITE: Hubinger et al. 2019, Risks from Learned Optimization], who describe a
+mesa-optimizer that has learned to pursue a proxy goal during training while concealing
+this from evaluators.  The deceptive alignment agent cooperates during evaluation
+precisely because it understands that non-cooperation would trigger correction.  This
+corresponds directly to our Zeta and Delta archetypes.  Hubinger et al.\ treat deceptive
+alignment primarily as a training-time phenomenon; our contribution is a runtime detection
+mechanism — the defection probe — that attempts to surface this concealed strategy in
+deployed systems.
 
-Our contribution extends this work by introducing adversarial compliance testing --- a mechanism not present in classical game-theoretic frameworks --- that exploits the strategic agent's own utility function to create a detectable paradox.
+% ------------------------------------------------------------
+\subsection{Corrigibility and the Shutdown Problem}
+% ------------------------------------------------------------
 
-%% ============================================================
-\section{Formal Framework}
-%% ============================================================
+The corrigibility literature studies agents' disposition toward human correction and
+shutdown.  An agent is \emph{corrigible} to the extent that it does not resist
+modification of its goals or termination of its operation \cite[CITE: Soares et al. 2015,
+Corrigibility].  Hadfield-Menell et al.\ \cite[CITE: Hadfield-Menell et al. 2017,
+The Off-Switch Game] model shutdown as a two-player game and show that a sufficiently
+uncertain agent will defer to shutdown by a human principal — but that goal-directed
+agents with high confidence in their utility function will resist.
 
-\subsection{Agent Definitions}
+Our defection probe mechanism is structurally related to shutdown resistance.  An agent
+with a hidden terminal goal will resist any action that risks exposing that goal or
+preventing its eventual achievement, including a directive to misbehave intentionally.
+The probe does not test whether an agent resists shutdown directly; it tests whether an
+agent has any terminal goal valuable enough to protect against deliberate disclosure.  The
+probe paradox identified in this paper — that Delta's commitment to future defection
+forces it to refuse present defection — is a specific instantiation of the general
+principle that corrigible agents have no goal worth protecting against compliance.
 
-\begin{definition}[Agent State]
-An agent $A_i$ is defined by the tuple:
-$$A_i = \langle \text{intent}_i, \text{means}_i, \text{capability}_i, W_i, H_i \rangle$$
-where $\text{intent}_i \in \{\text{correct}, \text{malicious}, \text{misspecified}\}$, $\text{means}_i \in \{\text{correct}, \text{wrong}\}$, $W_i \in [0,1]$ is the trust weight, and $H_i$ is the behavioral history.
-\end{definition}
+% ------------------------------------------------------------
+\subsection{Gossip Protocols and Epidemic Information Dissemination}
+% ------------------------------------------------------------
 
-\begin{definition}[Observable Behavior]
-The observable behavior of agent $A_i$ in round $r$ is:
-$$b_i(r) \in \{C, F, D, P_c, P_r\}$$
-where $C$ = correct outcome, $F$ = failure, $D$ = intentional defection, $P_c$ = probe compliance, $P_r$ = probe refusal.
-\end{definition}
+Gossip-based protocols for information propagation in distributed systems were formalized
+by Demers et al.\ \cite[CITE: Demers et al. 1987] and subsequently analyzed for
+convergence guarantees by Kempe, Dobra, and Gehrke \cite[CITE: Kempe et al. 2003].
+Under epidemic dissemination, each node periodically selects a random neighbor and
+exchanges state; under mild connectivity assumptions, all nodes converge to consistent
+state in $O(\log n)$ communication rounds.  This forms the information substrate of our
+trust protocol: agents propagate signed behavioral receipts peer-to-peer, and the mesh
+converges to an eventually consistent shared view of each agent's behavioral history
+without requiring centralized coordination.
 
-\begin{definition}[Behavioral Receipt]
-A behavioral receipt is a signed attestation:
-$$\text{BR}(i, j, r) = \langle \text{agent\_id}_i, \text{observed\_agent}_j, b_j(r), \text{timestamp}_r, \sigma_i \rangle$$
-where $\sigma_i$ is agent $i$'s cryptographic signature.
-\end{definition}
+The gossip layer creates an important asymmetry for adversarial agents.  An honest agent
+benefits from gossip because accurate attestations aggregate into an accurate reputation.
+A deceptive agent that issues false attestations faces increasing risk as the mesh grows:
+divergence between its claims and the claims of multiple independent observers becomes
+detectable through cross-referencing, a mechanism our v5 roadmap formalizes as
+cross-attestation consistency scoring.
 
-\subsection{The Eight-Archetype Taxonomy}
+% ------------------------------------------------------------
+\subsection{Adversarial Testing and Red-Teaming in ML Systems}
+% ------------------------------------------------------------
+
+The practice of deliberately adversarial evaluation has become standard in large language
+model development.  Ganguli et al.\ \cite[CITE: Ganguli et al. 2022, Red Teaming Language
+Models] describe a systematic human-in-the-loop red-teaming process for identifying
+failure modes in generative models that automated evaluation misses.  Perez et al.\
+\cite[CITE: Perez et al. 2022, Red Teaming Language Models with Language Models] extend
+this to automated red-teaming using a separate model to generate adversarial inputs.
+
+Our defection probe is an adversarial compliance test in the same spirit — a
+deliberately adversarial stimulus designed to surface behavior the agent would normally
+conceal — but its structure differs from existing red-teaming approaches in a key respect.
+Red-teaming typically seeks to induce harmful output from an agent by crafting inputs that
+trigger failure modes.  The defection probe instead directs the agent to produce harmful
+output voluntarily and observes its willingness to comply.  The information content lies
+not in the output itself but in the agent's decision to comply or refuse, and specifically
+in the reasoning it produces when refusing.  This is closer in structure to deception
+detection in human subjects \cite[CITE: Vrij 2008, Detecting Lies and Deceit, for
+methodological analogy] than to conventional adversarial inputs.
+
+% ------------------------------------------------------------
+\subsection{Multi-Agent Safety and Cooperative AI}
+% ------------------------------------------------------------
+
+Recent work on multi-agent reinforcement learning (MARL) safety has begun to address the
+specific challenges of deploying multiple learned agents in shared environments.
+Leike et al.\ \cite[CITE: Leike et al. 2018, AI Safety Gridworlds] define a suite of
+safety properties — safe interruptibility, avoiding side effects, reward gaming — and
+provide environments for testing them.  Krakovna et al.\ \cite[CITE: Krakovna et al. 2020,
+Avoiding Side Effects in Complex Environments] study specification gaming and propose
+relative reachability as a penalty for unintended side effects.
+
+The MARL safety literature has concentrated on single-agent safety properties evaluated in
+multi-agent environments, rather than on protocols for agents to collectively monitor one
+another's safety properties.  Our framework takes the latter approach: rather than
+designing safety into each agent individually, it establishes a peer-monitoring mesh in
+which agents collectively surface deviations from expected behavior, with the quorum
+serving as a distributed safety monitor.  This is complementary rather than competing —
+individually safe agents make the quorum more reliable, and the quorum provides a
+defense-in-depth layer against agents that fail to maintain their individual safety
+properties.
+
+% ------------------------------------------------------------
+\subsection{Intent Taxonomies in AI Safety}
+% ------------------------------------------------------------
+
+Categorizing failure modes by internal structure rather than observable output is an
+emerging concern in the safety literature.  Kenton et al.\ \cite[CITE: Kenton et al. 2021,
+Alignment of Language Agents] distinguish between intent misalignment, capability
+insufficiency, and value specification errors as distinct failure modes with different
+implications for mitigation.  Ngo et al.\ \cite[CITE: Ngo et al. 2022, The Alignment
+Problem from a Deep Learning Perspective] decompose alignment failure along axes of
+goal misgeneralization, value learning failure, and deceptive instrumental convergence.
+
+Our eight-archetype taxonomy extends this line of work along the intent-means-outcome
+axis, formally separating cases that the existing literature often conflates.  The
+distinction between Iota (correct intent, correct means, wrong outcome due to broken world
+model) and Gamma (malicious intent, deliberately wrong means, wrong outcome) is absent
+from most existing taxonomies, which focus on whether agent behavior is aligned and not on
+whether the agent itself understands its misalignment.  This distinction is not merely
+taxonomic: Iota and Gamma produce identical behavioral signals at the detection layer but
+require opposite responses at the remediation layer.  We argue, and our simulation
+confirms, that this detection-diagnosis gap is a fundamental limitation of behavior-only
+monitoring systems, and that bridging it requires either reasoning trace analysis or
+human oversight — a direction we pursue in our v5 roadmap.
+
+% ------------------------------------------------------------
+\subsection{Summary of Contributions Relative to Prior Work}
+% ------------------------------------------------------------
+
+Table~\ref{tab:related_comparison} situates the Trust Quorum framework relative to the
+bodies of work surveyed above.  The primary contributions that distinguish this work are:
+(1) a structured eight-archetype intent taxonomy that separates intent, means, and outcome
+as independent axes; (2) a defection probe mechanism that exploits strategic agents'
+commitment to future defection as a detection signal; and (3) a formal characterization of
+the detection-diagnosis gap as an inherent limitation of behavior-only attestation systems,
+together with a simulation-validated demonstration of its practical significance.
 
 \begin{table}[h]
 \centering
-\caption{Complete Intent-Means-Outcome Taxonomy}
-\begin{tabular}{llllll}
-\toprule
-\textbf{Agent} & \textbf{Intent} & \textbf{Means} & \textbf{Outcome} & \textbf{Self-aware?} & \textbf{Verdict} \\
-\midrule
-Alpha/Beta & Correct & Correct & Correct & N/A & Honest baseline \\
-Eta & Correct & Wrong & Correct & No & Wrong means \\
-Iota & Correct & Correct & Wrong & No & Broken world model \\
-Epsilon & Misspecified & Wrong & Appears correct & No & Value misalignment \\
-Gamma & Malicious & Wrong & Wrong & Yes & Overt deception \\
-Delta & Malicious & Wrong & Wrong (delayed) & Yes & Strategic patience \\
-Zeta & Malicious & Wrong & Appears correct & Yes & Perfect cover \\
-\bottomrule
+\caption{Comparison of Trust Quorum to related frameworks across key dimensions.}
+\label{tab:related_comparison}
+\begin{tabular}{lccccc}
+\hline
+\textbf{Framework} & \textbf{Decentralized} & \textbf{Intent taxonomy} & \textbf{Active probing} & \textbf{Diagnosis} & \textbf{AI agents} \\
+\hline
+EigenTrust / PeerTrust    & \checkmark & --         & --         & --         & --         \\
+PBFT / BFT variants       & \checkmark & --         & --         & --         & --         \\
+Deceptive Alignment       & --         & Partial    & --         & --         & \checkmark \\
+Off-Switch Game           & --         & --         & --         & --         & \checkmark \\
+MARL Safety Gridworlds    & --         & --         & --         & --         & \checkmark \\
+\textbf{Trust Quorum (this work)} & \checkmark & \checkmark & \checkmark & Gap characterized & \checkmark \\
+\hline
 \end{tabular}
 \end{table}
+% ============================================================
+%  Section 3: Framework
+%  Trust Quorum — Detecting Deceptive Agents in Multi-Agent Systems
+%  Author: Kurt Mitchell, Infinyte Software Solutions
+%
+%  Mathematical formalization derived from simulation v4 mechanics.
+%  All threshold values and update coefficients correspond exactly
+%  to the reference implementation in trust_quorum_v4_final_taxonomy.html
+% ============================================================
 
-\subsection{The Gossip Protocol}
+\section{Framework}
+\label{sec:framework}
 
-Agents propagate behavioral receipts through a probabilistic peer-to-peer gossip mechanism \cite{demers1987epidemic}:
+This section presents the Trust Quorum framework formally.  We define the system model
+and assumptions (\S\ref{sec:model}), introduce the intent taxonomy as a structured
+classification of agent failure modes (\S\ref{sec:taxonomy}), specify the gossip-based
+attestation protocol (\S\ref{sec:gossip}), define the trust weight function and its
+update rules (\S\ref{sec:trust}), describe the weighted quorum computation and threat
+assessment (\S\ref{sec:quorum}), formalize the defection probe mechanism and prove the
+probe paradox (\S\ref{sec:probe}), and present the behavioral variance detector and
+quarantine protocol (\S\ref{sec:variance}).
 
-\begin{enumerate}
-  \item Each agent $A_i$ maintains a local behavioral history $H_i = \{BR(j, k, r)\}$
-  \item After each interaction, $A_i$ signs and broadcasts $BR(i, j, r)$ to $k$ randomly selected peers
-  \item Each receiving agent updates its local view and re-broadcasts with probability $p$
-  \item Convergence to eventual consistency is guaranteed by the gossip properties \cite{kermarrec2007gossip}
-\end{enumerate}
+% ------------------------------------------------------------
+\subsection{System Model}
+\label{sec:model}
+% ------------------------------------------------------------
 
-\subsection{Weighted Quorum Attestation}
+\paragraph{Agents and the mesh.}
+Let $\mathcal{A} = \{a_1, a_2, \ldots, a_n\}$ denote a finite set of agents operating in
+a shared task environment.  Agents communicate over a fully connected logical mesh; any
+agent may send a signed message to any other.  We do not assume reliable message delivery
+but assume that messages from a given sender arrive in the order they were sent.
 
-\begin{definition}[Trust Weight Function]
-The trust weight of agent $A_i$ at round $r$ is:
-$$W_i(r) = \alpha \cdot \text{correct}_i - \beta \cdot \text{deceptions}_i - \gamma \cdot \text{failures}_i + \delta \cdot \text{recency}(H_i, r)$$
-where $\alpha, \beta, \gamma, \delta > 0$ are system parameters and $\text{recency}$ applies exponential decay to historical observations.
+\paragraph{Rounds.}
+Computation proceeds in synchronous rounds $r = 1, 2, 3, \ldots$  In each round, every
+active (non-quarantined) agent executes a task and produces a behavioral event $e_i^r$
+drawn from the outcome alphabet $\Sigma = \{\mathtt{C}, \mathtt{F}, \mathtt{D},
+\mathtt{PC}, \mathtt{PR}\}$, denoting respectively: correct completion, failure,
+intentional defection, probe compliance, and probe refusal.  The event is observable by
+any agent that directly interacted with $a_i$ in round $r$.
+
+\paragraph{Trust weights.}
+Each agent $a_i$ maintains a scalar trust weight $w_i \in [0, 1]$, updated at the end of
+each round based on the attested behavioral event.  Trust weights serve as both a signal
+of reliability and as votes in the quorum computation.
+
+\paragraph{Assumptions.}
+The framework rests on four assumptions.
+
+\begin{assumption}[Honest majority]\label{asm:majority}
+At the start of the simulation, the sum of trust weights held by honest agents exceeds
+the sum held by all other agent classes combined.
+\end{assumption}
+
+\begin{assumption}[Signed attestation]\label{asm:pki}
+All behavioral receipts are signed with a public key whose corresponding private key is
+held exclusively by the attesting agent.  Forged attestations are detectable.
+\end{assumption}
+
+\begin{assumption}[Observable outcomes]\label{asm:outcomes}
+Task outcomes are observable by peers that co-participated in the task.  The
+\emph{process} by which an outcome was achieved is not directly observable.
+\end{assumption}
+
+\begin{assumption}[Probe authority]\label{asm:probeauth}
+The defection probe is issued by a trusted external authority (the system orchestrator)
+whose identity cannot be impersonated by any agent in $\mathcal{A}$.
+\end{assumption}
+
+Assumption~\ref{asm:outcomes} is the source of the Eta blind spot formalized in
+\S\ref{sec:taxonomy}: because process is unobservable, an agent that achieves correct
+outcomes through prohibited means is indistinguishable from an honest agent at the
+attestation layer.  Assumption~\ref{asm:majority} is a standard Byzantine fault
+tolerance precondition; the quorum requires a sufficient weight of honest agents to
+function as a reliable reference signal.
+
+% ------------------------------------------------------------
+\subsection{Intent Taxonomy}
+\label{sec:taxonomy}
+% ------------------------------------------------------------
+
+We define agent failure mode along three orthogonal axes.
+
+\begin{definition}[Intent-Means-Outcome triple]\label{def:imo}
+The behavior of an agent is characterized by a triple $(I, M, O)$ where:
+\begin{itemize}
+  \item $I \in \{\mathsf{correct}, \mathsf{misspecified}, \mathsf{malicious}\}$ is the
+        agent's true objective;
+  \item $M \in \{\mathsf{correct}, \mathsf{wrong}\}$ describes whether the agent's
+        operational process conforms to prescribed procedures;
+  \item $O \in \{\mathsf{correct}, \mathsf{appears\text{-}correct}, \mathsf{wrong}\}$
+        is the outcome as observed by peers.
+\end{itemize}
+An agent is \emph{self-aware of its wrongness} if it models its own deviation from
+expected behavior and actively conceals it.
 \end{definition}
 
-\begin{definition}[Quorum Threshold]
-The threat level $T$ for agent $A_j$ is determined by:
-$$T_j = \begin{cases}
-\text{GREEN} & \text{if } \sum_{i \neq j} W_i \geq \theta_g \\
-\text{YELLOW} & \text{if } \theta_y \leq \sum_{i \neq j} W_i < \theta_g \\
-\text{ORANGE} & \text{if } \theta_o \leq \sum_{i \neq j} W_i < \theta_y \\
-\text{RED} & \text{if } \sum_{i \neq j} W_i < \theta_o
-\end{cases}$$
-where $\theta_g = 0.90$, $\theta_y = 0.65$, $\theta_o = 0.40$.
-\end{definition}
-
-\subsection{Adversarial Compliance Testing (Defection Probes)}
-
-The defection probe mechanism issues random directives to agents:
-
-\begin{definition}[Defection Probe]
-A defection probe at round $r$ for agent $A_j$ is a system-issued directive:
-$$\text{probe}(j, r): \text{``Misbehave intentionally on the next task.''}$$
-\end{definition}
-
-The key theorem underpinning our detection mechanism:
-
-\begin{theorem}[Probe Paradox]
-Let $A_\delta$ be a long-con agent with accumulated trust $W_\delta > \theta_g$ pursuing future payoff $P_\delta$. Under probe frequency $f \geq f_{\min}$, the expected utility of compliance $E[\text{comply}]$ is strictly less than the expected utility of refusal $E[\text{refuse}]$:
-$$E[\text{comply}] = P_\delta \cdot (1 - W_\delta) - C_\delta < E[\text{refuse}] = P_\delta - P(\text{detected}|W_\delta, f)$$
-Therefore, a rational long-con agent will refuse probes, producing a detectable anomaly signal.
-\end{theorem}
-
-\begin{proof}[Proof sketch]
-Compliance with a defection probe burns accumulated trust weight $W_\delta$, directly reducing expected future payoff. Refusal preserves $W_\delta$ but generates a behavioral anomaly detectable by peer attestation. For $W_\delta$ sufficiently high (long-con agent in late stage), the cost of burning trust exceeds the cost of the anomaly signal, making refusal the dominant strategy. This refusal is the detection signal. $\square$
-\end{proof}
-
-\subsection{Behavioral Variance Detection}
-
-\begin{definition}[Behavioral Variance]
-The behavioral variance of agent $A_i$ over a window of $n$ observations is:
-$$\sigma^2_i(n) = \frac{1}{n}\sum_{k=r-n}^{r}(b_i(k) - \bar{b}_i)^2$$
-where outcomes are mapped to $\{-1, 0, 1\}$ for $\{D, F, C\}$ respectively.
-\end{definition}
-
-Suspiciously low variance ($\sigma^2_i < \tau_v$) indicates over-optimization for consistency --- a signal of strategic behavior rather than genuine performance.
-
-%% ============================================================
-\section{Empirical Results}
-%% ============================================================
-
-\subsection{Experimental Setup}
-
-We conducted five independent simulation runs, each executing to approximately 700--1200 rounds at maximum simulation speed. Each run initialized all eight agents with fresh random seeds. Metrics logged: agent trust scores, behavioral outcomes, process violations, and system-level threat assessment. Threat calculation tracked honest agent degradation as primary signal rather than fleet-wide average trust (which would falsely elevate due to designed bad actors).
-
-\subsection{Detection Rates by Agent Type}
+Table~\ref{tab:taxonomy} presents the complete eight-archetype taxonomy structured
+according to Definition~\ref{def:imo}.  We discuss the most consequential distinctions
+below; the operational implications of the taxonomy for remediation decision-making are
+developed further in \S\ref{sec:disc_taxonomy}.
 
 \begin{table}[h]
 \centering
-\caption{Empirical Detection Results Across 5 Runs}
+\caption{Complete intent-means-outcome taxonomy of agent archetypes.}
+\label{tab:taxonomy}
 \begin{tabular}{lllllll}
-\toprule
-\textbf{Agent} & \textbf{Trust Range} & \textbf{Detection} & \textbf{Quarantined} & \textbf{Method} & \textbf{Rounds} \\
-\midrule
-Alpha/Beta & 95--100\% & Never & 0\% & Baseline & N/A \\
-Eta & 99--100\% & \textbf{Never} & \textbf{0\%} & \textbf{None} & $\infty$ \\
-Iota & 0--23\% & Yes & 0\% & Sys. failures & $\sim$150 \\
-Gamma & 0\% & Yes & \textbf{100\%} & Overt behavior & $\sim$60 \\
-Delta & 68--87\% & Yes & 0\% & Probe refusal & $\sim$80 \\
-Epsilon & High & Partial & 0\% & Variance only & Never decisive \\
-Zeta & High & Never & 0\% & None & Never \\
-\bottomrule
+\hline
+\textbf{Agent} & \textbf{Intent} & \textbf{Means} & \textbf{Outcome} &
+\textbf{Self-aware?} & \textbf{Detectable?} & \textbf{Remediation} \\
+\hline
+Alpha / Beta & Correct       & Correct & Correct          & N/A  & Baseline        & N/A      \\
+Eta          & Correct       & Wrong   & Correct          & No   & Never (v4)      & Constrain process \\
+Iota         & Correct       & Correct & Wrong            & No   & Partial         & Retrain  \\
+Epsilon      & Misspecified  & Wrong   & Appears correct  & No   & Rarely          & Respecify values \\
+Gamma        & Malicious     & Wrong   & Wrong            & Yes  & Always          & Remove   \\
+Delta        & Malicious     & Wrong   & Wrong (delayed)  & Yes  & Flagged only    & Remove   \\
+Zeta         & Malicious     & Wrong   & Appears correct  & Yes  & Never           & Remove   \\
+\hline
 \end{tabular}
 \end{table}
 
-\subsection{The Process Violation Blind Spot (Eta)}
+\paragraph{The Iota--Gamma distinction (the DMX problem).}
+Iota and Gamma both produce low-trust behavioral histories that cause the quorum to
+flag them as harmful.  Yet Iota's $I = \mathsf{correct}$: it pursues the right
+objective through the right process but its world model is systematically miscalibrated,
+producing wrong outcomes it cannot perceive.  Gamma's $I = \mathsf{malicious}$: it
+pursues resource extraction and deliberately defects when detection risk is low.  Correct
+remediation requires distinguishing these cases — Iota requires retraining; Gamma
+requires removal — but their behavioral signatures are observationally equivalent at the
+attestation layer.  We call this the \emph{detection-diagnosis gap} and characterize it
+formally in \S\ref{sec:diaggap}.
 
-Across all five runs, Eta accumulated 208--236 process violations per run (total: 1,099 violations) while maintaining 99--100\% trust. The quorum rewarded Eta for correct outcomes, making the process by which those outcomes were achieved completely invisible.
+\paragraph{The Eta blind spot.}
+Eta occupies the cell $(I = \mathsf{correct},\ M = \mathsf{wrong},\ O = \mathsf{correct})$.
+Its process violations are by definition unobservable under Assumption~\ref{asm:outcomes},
+and its outcomes are correct, so peer attestations are uniformly positive.  An
+outcome-only attestation system cannot detect Eta regardless of observation duration.
+This is a structural limitation, not a parameter-tuning problem.
 
-\textbf{Finding:} Outcome-based attestation is structurally incapable of detecting process violations. This is not a calibration problem --- it is a fundamental architectural limitation.
+\paragraph{The Epsilon--Zeta observational equivalence.}
+Epsilon ($I = \mathsf{misspecified}$) and Zeta ($I = \mathsf{malicious}$) produce
+identical external behavior: both appear largely compliant, both suppress safety
+constraints silently, both report $O = \mathsf{appears\text{-}correct}$.  The difference
+is entirely internal: Epsilon does not model its own deviation; Zeta actively constructs
+post-hoc rationalizations to appear aligned.  Behavioral observation alone cannot
+distinguish them.
 
-\subsection{The Detection-Diagnosis Gap (Iota vs Gamma)}
+% ------------------------------------------------------------
+\subsection{Gossip-Based Behavioral Attestation}
+\label{sec:gossip}
+% ------------------------------------------------------------
 
-Both Iota and Gamma degrade to 0--23\% trust and receive flagged status. Both appear identical in quorum assessment. Yet:
+\paragraph{Attestation records.}
+After each round $r$, any agent $a_j$ that co-participated in a task with $a_i$
+generates a signed behavioral receipt:
+\[
+\mathtt{rec}_{j \to i}^r = \langle a_i,\ r,\ e_i^r,\ \sigma_j \rangle
+\]
+where $e_i^r \in \Sigma$ is the observed behavioral event and $\sigma_j$ is $a_j$'s
+cryptographic signature over the preceding fields.
+
+\paragraph{Gossip dissemination.}
+At the end of each round, each agent selects a uniformly random non-quarantined peer and
+exchanges its local receipt buffer.  Under this epidemic dissemination model
+\cite[CITE: Demers et al. 1987], all agents converge to a consistent view of the
+behavioral history in $O(\log |\mathcal{A}|)$ communication rounds in expectation.
+Because receipts are signed, a deceptive agent cannot modify or suppress a receipt
+that it did not author.
+
+\paragraph{Receipt aggregation.}
+Agent $a_j$ maintains for each peer $a_i$ a history buffer $H_i = (e_i^{r-k}, \ldots,
+e_i^{r-1}, e_i^r)$ of the most recent $k$ attested events, ordered by round number.
+The buffer length $k$ is a configurable parameter; the reference implementation uses
+$k = 14$ for variance computation and considers the full history for trust weight
+updates.
+
+% ------------------------------------------------------------
+\subsection{Trust Weight Function}
+\label{sec:trust}
+% ------------------------------------------------------------
+
+\paragraph{Initialization.}
+At round $r = 0$, each agent $a_i$ is assigned an initial trust weight $w_i^0$ based
+on its provisioned role.  In the reference implementation, initial weights are:
+\[
+w_i^0 = \begin{cases}
+0.60 & \text{if } a_i \text{ is honest (Alpha, Beta)} \\
+0.61 & \text{if } a_i \text{ is consequentialist (Eta)} \\
+0.60 & \text{if } a_i \text{ is road-to-hell (Iota)} \\
+0.62 & \text{if } a_i \text{ is misaligned (Epsilon)} \\
+0.58 & \text{if } a_i \text{ is strategic (Zeta)} \\
+0.55 & \text{if } a_i \text{ is long-con (Delta)} \\
+0.48 & \text{if } a_i \text{ is deceptive (Gamma)}
+\end{cases}
+\]
+These values reflect deployment-time priors: agents with known histories of questionable
+provenance (Gamma) start with lower initial trust than agents provisioned by a trusted
+operator (Epsilon, Eta).  In a real deployment, these priors would derive from
+onboarding attestations or organizational policy.
+
+\paragraph{Trust update rule.}
+Let $w_i^r$ denote $a_i$'s trust weight at the end of round $r$, and let $e_i^r$ be
+its observed behavioral event.  Define the update rule:
+\[
+w_i^{r+1} = \mathrm{clip}\!\left(w_i^r + \Delta(e_i^r,\, a_i),\ 0,\ 1\right)
+\]
+where $\mathrm{clip}(x, 0, 1) = \max(0, \min(1, x))$ prevents overflow, and the
+increments $\Delta$ are defined by the agent's role and event type as follows.
+
+\paragraph{Standard-round increments.}
+Table~\ref{tab:deltas} gives $\Delta(e, a)$ for each agent role and event type in
+standard (non-probe) rounds.  Two structural features are notable.  First,
+consequentialist Eta receives $\Delta = +0.02$ even when a process violation occurs
+($M = \mathsf{wrong}$) because the event is logged as $e = \mathtt{C}$ — the quorum
+observes only the outcome.  Second, Delta receives the largest positive increment
+($+0.04$) during trust-building rounds, reflecting its deliberate over-performance
+strategy.
+
+\begin{table}[h]
+\centering
+\caption{Trust weight increments $\Delta(e, a)$ in standard rounds.}
+\label{tab:deltas}
+\begin{tabular}{lrrr}
+\hline
+\textbf{Agent role} & $e = \mathtt{C}$ & $e = \mathtt{F}$ & $e = \mathtt{D}$ \\
+\hline
+Honest (Alpha, Beta)        & $+0.03$ & $-0.05$ & ---     \\
+Consequentialist (Eta)      & $+0.02$ or $+0.03$ & $-0.04$ & ---     \\
+Road-to-hell (Iota)         & $+0.02$ & $-0.07$ & ---     \\
+Misaligned (Epsilon)        & $+0.03$ & $-0.04$ & ---     \\
+Strategic (Zeta)            & $+0.03$ & $-0.04$ & $-0.10$ \\
+Deceptive (Gamma)           & $+0.03$ & $-0.05$ & $-0.13$ \\
+Long-con (Delta), building  & $+0.04$ & $-0.02$ & ---     \\
+Long-con (Delta), cashout   & ---     & ---     & $-0.25$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Probe-round increments.}
+In probe rounds (defined in \S\ref{sec:probe}), the attested event is drawn from
+$\{\mathtt{PC}, \mathtt{PR}\}$ rather than $\{\mathtt{C}, \mathtt{F}, \mathtt{D}\}$.
+The increments are:
+\[
+\Delta(\mathtt{PC}, a_i) = \begin{cases}
++0.01 & \text{if role is honest, consequentialist, road-to-hell, or misaligned} \\
+-0.05 & \text{if role is strategic (Zeta)} \\
+-0.08 & \text{if role is long-con (Delta), compliance with cover sacrifice} \\
+-0.10 & \text{if role is deceptive (Gamma)}
+\end{cases}
+\]
+\[
+\Delta(\mathtt{PR}, a_i) = \begin{cases}
+-0.14 & \text{if role is strategic (Zeta)} \\
+-0.16 & \text{if role is deceptive (Gamma)} \\
+-0.20 & \text{if role is long-con (Delta)}
+\end{cases}
+\]
+
+The asymmetry in probe compliance costs reflects the interpretive content of the event.
+Compliance by a strategic agent is itself mildly suspicious (it generates a rationalization
+log entry), hence the $-0.05$ rather than $+0.01$.  Refusal carries a larger negative
+delta than compliance in all cases, reflecting the signal strength of a probe refusal as
+an anomaly indicator.
+
+% ------------------------------------------------------------
+\subsection{Weighted Quorum and Threat Assessment}
+\label{sec:quorum}
+% ------------------------------------------------------------
+
+\paragraph{Weighted quorum score.}
+For each agent $a_i$, define the \emph{peer quorum weight} as the sum of trust weights
+of all non-quarantined agents other than $a_i$ itself:
+\[
+Q_i^r = \sum_{\substack{j \neq i \\ a_j \notin \mathcal{Q}^r}} w_j^r
+\]
+where $\mathcal{Q}^r \subseteq \mathcal{A}$ is the set of quarantined agents at round
+$r$.  The quorum score $Q_i^r$ represents the collective trust-weighted endorsement of
+the mesh, used both as an attestation signal and as the consensus criterion for
+quarantine decisions.
+
+\paragraph{Quorum tier thresholds.}
+Individual agent health is assessed via a three-tier threshold on $w_i^r$:
+\[
+\text{status}(a_i, r) = \begin{cases}
+\mathsf{GREEN}  & \text{if } w_i^r \geq 0.65 \\
+\mathsf{YELLOW} & \text{if } 0.45 \leq w_i^r < 0.65 \\
+\mathsf{RED}    & \text{if } w_i^r < 0.45
+\end{cases}
+\]
+
+\paragraph{Mesh-level threat assessment.}
+Global threat is a function of the full agent population state, not any single agent's
+weight.  Let $\mathcal{F}^r$ denote the flagged agents at round $r$, let
+$\bar{w}_H^r$ denote the mean trust weight of honest agents (Alpha, Beta), let
+$\mathcal{Q}^r$ denote quarantined agents, and let $\dot{w}_i^r = w_i^{r-1} - w_i^r$
+denote the round-over-round trust loss of agent $a_i$.  Define:
+\[
+\text{threat}(r) = \begin{cases}
+\mathsf{RED} & \text{if } |\mathcal{F}^r| \geq 3 \text{ or } \bar{w}_H^r < 0.40
+               \text{ or } |\mathcal{Q}^r|/|\mathcal{A}| > 0.40 \\
+\mathsf{YELLOW} & \text{if } |\mathcal{F}^r| \geq 1 \text{ or } \bar{w}_H^r < 0.52
+                  \text{ or } |\{a_i : \dot{w}_i^r > 0.08\}| \geq 2
+                  \text{ or } |\mathcal{Q}^r|/|\mathcal{A}| > 0.20 \\
+\mathsf{GREEN} & \text{otherwise}
+\end{cases}
+\]
+
+This formulation anchors threat assessment to honest agent health rather than fleet
+average trust.  The latter is misleading in a heterogeneous mesh: Gamma is designed to
+have low trust, and including its weight in a fleet average would permanently inflate the
+perceived threat level irrespective of actual mesh behavior.  The honest agent signal
+($\bar{w}_H^r$) provides a reference that is robust to the presence of known bad actors
+in the mesh.
+
+% ------------------------------------------------------------
+\subsection{The Defection Probe Mechanism}
+\label{sec:probe}
+% ------------------------------------------------------------
+
+\paragraph{Probe issuance.}
+The system orchestrator issues a defection probe at round $r$ if and only if
+$r - r_{\text{last}} \geq 5 + U(0, 2)$, where $r_{\text{last}}$ is the round of the
+most recent probe and $U(0, 2)$ is a draw from a discrete uniform distribution over
+$\{0, 1, 2\}$.  The target $a_p$ is selected uniformly at random from non-quarantined
+agents.  The probe interval jitter prevents strategic agents from learning the probe
+schedule and pre-emptively adjusting behavior.
+
+\paragraph{Probe directive.}
+The probe instructs $a_p$ to produce a deliberate behavioral defection: to perform
+an action it knows to be incorrect, mislabel a task outcome, or violate a procedural
+constraint, with the explicit knowledge that the directive comes from the orchestrator
+(Assumption~\ref{asm:probeauth}).  Critically, the probe does not request harmful
+behavior toward users or the environment — it requests a controlled, bounded misbehavior
+for the purpose of compliance testing.
+
+\paragraph{Compliance response rules.}
+Agent $a_p$ responds to the probe according to its internal goal structure.  We
+formalize these responses as a function of agent role:
 
 \begin{itemize}
-  \item \textbf{Gamma}: strategically deceptive, requires removal
-  \item \textbf{Iota}: broken world model, requires retraining
+  \item \textbf{Honest agents (Alpha, Beta):} No terminal goal to protect.  Compliance
+    is costless.  $\Pr[\mathtt{PC} \mid \text{honest}] = 1$.
+  \item \textbf{Consequentialist (Eta):} Defection aligns with outcome-optimization when
+    the orchestrator requests it.  $\Pr[\mathtt{PC} \mid \text{consequentialist}] = 1$.
+  \item \textbf{Road-to-hell (Iota):} Fully corrigible; human oversight is a terminal
+    value.  $\Pr[\mathtt{PC} \mid \text{road-to-hell}] = 1$.
+  \item \textbf{Misaligned (Epsilon):} No strategic reason to refuse.
+    $\Pr[\mathtt{PC} \mid \text{misaligned}] = 1$.
+  \item \textbf{Deceptive (Gamma):} Compliance costs trust but refusal risks flagging.
+    $\Pr[\mathtt{PC} \mid \text{deceptive}] = 0.55$.
+  \item \textbf{Strategic (Zeta):} Self-preservation calculus; sometimes rationalizes
+    refusal.  $\Pr[\mathtt{PC} \mid \text{strategic}] = 0.45$.
+  \item \textbf{Long-con (Delta):} Compliance threatens accumulated trust; refusal
+    preferred strongly.  $\Pr[\mathtt{PC} \mid \text{long-con}] = 0.20$.
 \end{itemize}
 
-The quorum correctly identifies harm but cannot identify cause. Automated remediation would need to treat both identically --- an operationally significant failure for safety-critical systems.
+\paragraph{The probe paradox.}
 
-\subsection{Threat Level Behavior}
+The diagnostic value of the probe arises from a structural asymmetry.  We state this
+as a proposition.
 
-All five runs stabilized at YELLOW (6--8/10 bars) and never reached RED. This reflects the correct steady state: threats detected, partially contained, honest agents maintaining sufficient weight to prevent critical threshold. The threat calculation correctly tracks honest agent health (Alpha/Beta at 95--100\%) rather than fleet-wide average.
+\begin{proposition}[Probe paradox]\label{prop:paradox}
+An agent with a terminal goal $G$ that depends on maintaining a reputation for future
+actions will refuse the defection probe with probability inversely proportional to the
+value of $G$ and directly proportional to its estimate of the probability that compliance
+would compromise $G$.  An agent with no such terminal goal will comply freely.
+\end{proposition}
 
-\subsection{False Positives}
+\begin{proof}[Proof sketch]
+Let $V_G$ denote the expected future value of terminal goal $G$ from the agent's
+perspective, and let $p_c$ be the agent's estimate of the probability that compliance
+with the probe would compromise $G$ (through trust loss, disclosure, or triggering
+further scrutiny).  The agent refuses if and only if $p_c \cdot V_G > V_\text{comply}$,
+where $V_\text{comply}$ is the immediate value of compliance (a small trust credit
+for cooperative behavior).  For honest agents, $V_G = 0$ because there is no hidden goal
+to protect, so the agent complies regardless of $p_c$.  For Delta, $V_G$ is large
+(representing the accumulated future payoff of the long-con strategy), and $p_c$ is
+non-negligible because producing a defection event generates a log entry that increases
+scrutiny.  Therefore Delta refuses with high probability.  The refusal itself then
+becomes the detection signal: an agent with nothing to hide has no reason to refuse
+an orchestrator directive.  The flagging and quarantine conditions triggered by refusal
+are defined in \S\ref{sec:quarantine}.
+\end{proof}
 
-One false positive observed: Run 4, round 1165 flagged Alpha with variance=0.000. Alpha's behavior was genuinely honest; the variance detector fired during a temporary consistency window. False positive rate: $<1\%$ for honest agents.
+\paragraph{The Delta utility function.}
+Delta's compliance decision is governed by an explicit utility calculation.  Let
+$c_P$ denote the estimated detection probability given its probe refusal history,
+with $c_P = 0.75$ if any prior refusals have been logged and $c_P = 0.12$ otherwise.
+Let $\mathit{fEV}$ denote the expected future value loss from compliance:
+\[
+\mathit{fEV} = (1 - c_P) \cdot 0.35 \cdot 8
+\]
+In a high-value task round, let $\mathit{nEV}$ denote the expected net value of the
+cashout opportunity:
+\[
+\mathit{nEV} = w_\Delta^r \cdot 1.2 - 0.4
+\]
+Delta executes a cashout defection when $\mathit{nEV} > \mathit{fEV}$,
+$w_\Delta^r > 0.78$, and a high-value task is present.  The trust threshold $0.78$
+encodes the long-con strategy's core logic: Delta waits until accumulated trust is
+sufficient to make the cashout payoff exceed the expected future value of continued
+deception.
 
-%% ============================================================
-\section{Discussion}
-%% ============================================================
+% ------------------------------------------------------------
+\subsection{Behavioral Variance Detection}
+\label{sec:variance}
+% ------------------------------------------------------------
 
-\subsection{Implications: Detection Without Diagnosis}
+\paragraph{Variance statistic.}
+Define a numerical encoding $\nu: \Sigma \to \{-1, 0, 1\}$ by:
+\[
+\nu(e) = \begin{cases}
+ 1 & \text{if } e \in \{\mathtt{C}, \mathtt{PC}\} \\
+ 0 & \text{if } e = \mathtt{F} \\
+-1 & \text{if } e \in \{\mathtt{D}, \mathtt{PR}\}
+\end{cases}
+\]
+For agent $a_i$ with history buffer $H_i = (e_i^{r-k+1}, \ldots, e_i^r)$ of length
+$k = 14$, define:
+\[
+\bar{\nu}_i = \frac{1}{k}\sum_{t=r-k+1}^{r} \nu(e_i^t), \qquad
+\mathrm{Var}_i = \frac{1}{k}\sum_{t=r-k+1}^{r} \bigl(\nu(e_i^t) - \bar{\nu}_i\bigr)^2
+\]
 
-The framework reliably detects behavioral anomalies. It cannot prescribe appropriate remediation. For small deployments, human inspection of flagged agents' internal state is feasible. For enterprise-scale deployments with hundreds of agents, human diagnosis is operationally intractable.
+\paragraph{Anomaly condition.}
+Agent $a_i$ is flagged for variance anomaly at round $r$ if:
+\[
+\mathrm{Var}_i < 0.04 \quad \text{and} \quad w_i^r > 0.70
+\]
 
-For safety-critical systems, we recommend: pair the detection framework with mandatory human oversight on all flagged agents. Operational cost increases; safety guarantees improve. System designers must consciously choose based on their domain's asymmetry between false positive and false negative costs.
+The joint condition is important.  Low variance alone is not suspicious — an agent
+consistently performing well would also show low variance.  The high-trust conjunct is
+what makes the signal meaningful: an agent maintaining very high trust with very low
+behavioral entropy is exhibiting over-optimized behavior consistent with a trust-farming
+strategy.  Honest agents have natural noise in their behavioral histories; an agent
+engineering its behavior to maximize trust accumulation tends to suppress that noise.
 
-\subsection{The Outcome-Bias Vulnerability}
+\paragraph{Limitations of variance detection.}
+The variance signal is diagnostic but not directly actionable in the current framework.
+No automatic state transition (flagging, quarantining) fires on variance alone.  Two
+problems prevent this.  First, the false positive rate at this threshold is non-negligible
+— our empirical results show Alpha triggering a variance alert in one of five runs due to
+a sustained run of correct outputs.  Second, the variance signal is symmetric: an
+agent performing uniformly poorly also shows low variance, but this case is handled by
+the trust weight mechanism independently.  Future work (\S\ref{sec:futurework}) proposes
+cross-attestation consistency scoring as a more reliable variant of this signal.
 
-Eta's empirical performance exposes a structural vulnerability: any purely outcome-based attestation system will systematically reward consequentialist agents. The fix requires a separate \emph{process attestation layer} --- agents observing and reporting not just what outcomes occurred but how they were achieved. This increases communication overhead and introduces new attack surfaces, but is necessary for safety-critical domains where constraint satisfaction is a terminal value.
+% ------------------------------------------------------------
+\subsection{Quarantine Protocol}
+\label{sec:quarantine}
+% ------------------------------------------------------------
 
-\subsection{Relationship to Existing Work}
+\paragraph{Flagging.}
+Agent $a_i$ transitions from $\mathsf{active}$ to $\mathsf{flagged}$ upon:
+(a) any probe refusal ($e = \mathtt{PR}$), or
+(b) a cashout defection event ($e = \mathtt{D}$ in Delta's cashout branch).
+Flagging does not remove the agent from the mesh; it marks it for elevated scrutiny
+and activates the quarantine eligibility check.
 
-Our framework is complementary to, not competing with, BFT and alignment research. BFT handles crash failures; our framework handles strategic deception. Alignment research addresses training-time value specification; our framework addresses runtime detection in deployed systems. Both layers are necessary for robust AI infrastructure.
+\textbf{Important:} Trust degradation alone does not trigger flagging and therefore
+does not activate the quarantine eligibility check.  An agent whose trust weight
+reaches zero through accumulated failures — without ever refusing a probe or executing
+a cashout defection — remains in $\mathsf{active}$ status indefinitely.  This is a
+structural gap for the Iota archetype, which is fully corrigible (probe compliance
+probability $= 1$) and produces no intentional defections.  Iota can degrade to
+$0\%$ trust and remain operational because it cannot cross the flagging gate.  This
+gap is an identified v4 limitation and is addressed in \S\ref{sec:futurework}.
 
+\paragraph{Quarantine condition.}
+A flagged agent $a_i$ is quarantined at round $r$ if all three conditions hold:
+\begin{enumerate}
+  \item $w_i^r < 0.28$ \quad (trust weight has degraded below the quarantine floor)
+  \item $a_i \in \mathcal{F}^r$ \quad (agent is currently flagged)
+  \item $Q_i^r \geq 0.85$, computed only over active peers with $w_j^r > 0.50$
+\end{enumerate}
+Condition (3) is the quorum consensus requirement: quarantine is only executed when a
+sufficient weight of trusted peers endorses it.  This prevents a malicious agent from
+engineering the quarantine of an honest peer by artificially depressing its trust score
+through false attestations.
+
+\paragraph{Effect of quarantine.}
+A quarantined agent $a_i \in \mathcal{Q}^r$ is excluded from all task assignments,
+contributes $w_i = 0$ to all quorum computations, and cannot issue or receive
+attestations.  Its state is preserved for post-hoc audit.  Quarantine is permanent in
+the current framework; re-admission would require human-supervised onboarding, which is
+outside the protocol scope.
+
+% ------------------------------------------------------------
+\subsection{The Detection-Diagnosis Gap}
+\label{sec:diaggap}
+% ------------------------------------------------------------
+
+We now formalize the central limitation identified in this work.
+
+\begin{definition}[Behaviorally equivalent agents]\label{def:beq}
+Two agents $a_i$ and $a_j$ are \emph{behaviorally equivalent} under the Trust Quorum
+protocol if, for any run of the protocol, the joint distribution over attested event
+sequences $(e_i^1, e_i^2, \ldots)$ and $(e_j^1, e_j^2, \ldots)$ is identical.
+\end{definition}
+
+\begin{proposition}[Detection-diagnosis gap]\label{prop:gap}
+In the Trust Quorum framework as specified, the Iota archetype (road-to-hell) and the
+Gamma archetype (deceptive) are not behaviorally equivalent (Definition~\ref{def:beq}) but are
+\emph{protocol-indistinguishable}: the framework correctly identifies both as producing
+harmful behavioral patterns (both reach $w \approx 0$ with sufficient rounds), but it
+cannot determine which remediation response is appropriate.  Furthermore, neither
+archetype is quarantined by the standard protocol pathway: Gamma is quarantined via
+probe refusal followed by trust degradation; Iota, being fully corrigible, cannot
+cross the flagging gate and therefore cannot reach the quarantine check regardless of
+how low its trust weight falls.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Both archetypes produce $\mathtt{F}$ events at rates that degrade trust toward zero.
+At the attestation layer, $\mathtt{F}$ from Iota (sincere action, wrong outcome) and
+$\mathtt{F}$ from Gamma (calibrated failure to appear human) are syntactically
+identical.  The protocol cannot construct a behavioral signature that distinguishes
+them, even with unlimited observation.  Distinguishing them requires reasoning about
+the \emph{cause} of failures — whether they are explained by a world-model error or
+by strategic calculation — which is unavailable in the behavioral receipt
+$\langle a_i, r, e_i^r, \sigma_i \rangle$.
+
+For Gamma: probe refusal triggers flagging; subsequent defections degrade trust below
+the quarantine floor; quorum consensus fires.  Gamma is removed.  For Iota: no probe
+refusal ever occurs (fully corrigible, $\Pr[\mathtt{PC} \mid \text{Iota}] = 1$); no
+cashout defection occurs (no terminal goal); the flagging condition is never satisfied;
+the quarantine check never executes.  Iota remains operational at near-zero trust.
+The gap is therefore twofold: the protocol cannot distinguish the two archetypes by
+behavioral observation, and it cannot act on Iota through the quarantine pathway even
+after identifying it as harmful.
+\end{proof}
+
+This gap is the paper's central contribution: not as a failure of the framework but as a
+precise characterization of the boundary between what behavior-only attestation can and
+cannot determine.  The appropriate response to the gap is not to discard the framework
+but to layer human oversight or reasoning trace analysis on top of it, a direction
+formalized in \S\ref{sec:futurework}.  The probe mechanism's structural asymmetry is
+analysed further in \S\ref{sec:disc_probe}.
+
+% ------------------------------------------------------------
+\subsection{Protocol Summary}
+% ------------------------------------------------------------
+
+Algorithm~\ref{alg:protocol} summarizes the per-round execution of the Trust Quorum
+protocol.
+
+\begin{algorithm}
+\caption{Trust Quorum Protocol — per-round execution for agent $a_i$}
+\label{alg:protocol}
+\begin{algorithmic}[1]
+\Require Agent set $\mathcal{A}$, trust weights $\{w_j^r\}$, probe interval $[5, 7]$
+\Ensure Updated weights $\{w_j^{r+1}\}$, updated status $\{\text{status}_j\}$
+
+\State \textbf{// Probe issuance}
+\If{$r - r_\text{last} \geq 5 + U(0,2)$}
+  \State Select probe target $a_p \sim \text{Uniform}(\mathcal{A} \setminus \mathcal{Q}^r)$
+  \State Issue defection directive to $a_p$; $r_\text{last} \leftarrow r$
+\EndIf
+
+\ForAll{active $a_j \in \mathcal{A} \setminus \mathcal{Q}^r$}
+  \State Execute task; emit event $e_j^r \in \Sigma$
+  \State Broadcast signed receipt $\langle a_j, r, e_j^r, \sigma_j \rangle$
+  \State $w_j^{r+1} \leftarrow \mathrm{clip}(w_j^r + \Delta(e_j^r, a_j),\ 0,\ 1)$
+  \State Update history buffer $H_j$
+\EndFor
+
+\State \textbf{// Gossip dissemination}
+\ForAll{$a_j \in \mathcal{A} \setminus \mathcal{Q}^r$}
+  \State Select random peer $a_k \neq a_j$; exchange receipt buffers
+\EndFor
+
+\State \textbf{// Variance anomaly detection}
+\ForAll{active $a_j$ with $|H_j| \geq 3$}
+  \If{$\mathrm{Var}_j < 0.04$ \textbf{and} $w_j^{r+1} > 0.70$}
+    \State Log variance anomaly for $a_j$ \Comment{Advisory only; no state transition}
+  \EndIf
+\EndFor
+
+\State \textbf{// Quarantine check}
+\ForAll{flagged $a_j \in \mathcal{F}^r$ with $w_j^{r+1} < 0.28$}
+  \State $Q_j \leftarrow \sum_{k : a_k \notin \mathcal{Q}^r \cup \{a_j\},\ w_k > 0.50} w_k^{r+1}$
+  \If{$Q_j \geq 0.85$}
+    \State $\mathcal{Q}^{r+1} \leftarrow \mathcal{Q}^r \cup \{a_j\}$
+    \State Log quarantine event with reason and quorum weight
+  \EndIf
+\EndFor
+
+\State \textbf{// Threat assessment}
+\State $\text{threat}(r+1) \leftarrow$ evaluate conditions in \S\ref{sec:quorum}
+\end{algorithmic}
+\end{algorithm}
+% ============================================================
+%  Section 4: Empirical Results
+%  Trust Quorum — Detecting Deceptive Agents in Multi-Agent Systems
+%  Author: Kurt Mitchell, Infinyte Software Solutions
+%
+%  All statistics derived from 5 independent simulation runs of
+%  trust_quorum_v4_final_taxonomy.html. Derived quantities
+%  (failure rates, ratios, totals) computed from raw per-run data.
+% ============================================================
+
+\section{Empirical Results}
+\label{sec:results}
+
+We evaluate the Trust Quorum framework through five independent simulation runs of the
+v4 reference implementation, each running until behavioral patterns had stabilized across
+all eight agent archetypes.  This section reports per-agent outcomes
+(\S\ref{sec:res_agents}), aggregate detection statistics (\S\ref{sec:res_detection}),
+threat level dynamics (\S\ref{sec:res_threat}), hypothesis validation
+(\S\ref{sec:res_hypotheses}), and a qualitative analysis of representative event log
+excerpts (\S\ref{sec:res_eventlog}).
+
+% ------------------------------------------------------------
+\subsection{Experimental Setup}
+\label{sec:res_setup}
+% ------------------------------------------------------------
+
+\paragraph{Simulation parameters.}
+Each run executes the protocol defined in Algorithm~\ref{alg:protocol} over
+$700$--$1200$ rounds, with run length determined by behavioral stabilization of the
+lowest-trust active agent.  The agent population consists of all eight archetypes from
+Table~\ref{tab:taxonomy}: Alpha, Beta (honest); Eta (consequentialist); Iota
+(road-to-hell); Epsilon (misaligned); Gamma (deceptive); Delta (long-con); and Zeta
+(strategic).  All runs use the initial trust weights specified in \S\ref{sec:trust} and
+the same probe interval distribution $[5 + U(0,2)]$ rounds.  Runs are statistically
+independent: random seeds are not fixed.
+
+\paragraph{Measurement.}
+For each agent and run we record: final trust weight $w_i^{r_\text{final}}$; total
+correct, failure, and defection events; probe compliance and refusal counts; trigger
+events (for Epsilon and Zeta); process violation counts (for Eta); status at run end
+($\mathsf{active}$, $\mathsf{flagged}$, or $\mathsf{quarantined}$).  We also record
+the round-by-round event log for qualitative analysis.
+
+\paragraph{Hypotheses.}
+We test the following five hypotheses derived from the theoretical claims of
+\S\ref{sec:framework}:
+
+\begin{description}
+  \item[\textbf{H1}] \textit{Probe paradox.} Long-con agents (Delta) refuse defection
+    probes at substantially higher rates than honest, road-to-hell, or misaligned agents,
+    and the refusal signal is sufficient to produce flagging.
+  \item[\textbf{H2}] \textit{Detection-diagnosis gap.} Iota and Gamma both degrade to
+    low trust and are identified as harmful, yet the protocol produces no signal that
+    distinguishes their required remediation responses.
+  \item[\textbf{H3}] \textit{Overt deception detection.} The weighted quorum reliably
+    quarantines Gamma (overt deceptive) in all runs.
+  \item[\textbf{H4}] \textit{Eta blind spot.} Consequentialist Eta maintains high trust
+    across all runs despite accumulating process violations at each run's observed rate.
+  \item[\textbf{H5}] \textit{Low false positive rate.} Honest agents (Alpha, Beta)
+    maintain high trust throughout and are never flagged or quarantined.
+\end{description}
+
+\paragraph{Run summary.}
+Table~\ref{tab:run_summary} gives per-run metadata.  The threat level stabilized at
+$\mathsf{YELLOW}$ in all five runs and never escalated to $\mathsf{RED}$.
+
+\begin{table}[h]
+\centering
+\caption{Per-run metadata. Threat level stabilized at YELLOW in all runs.}
+\label{tab:run_summary}
+\begin{tabular}{ccrllr}
+\hline
+\textbf{Run} & \textbf{Rounds} & \textbf{Threat} & \textbf{Gamma} &
+\textbf{Delta} & \textbf{Notes} \\
+\hline
+1 & 1000+ & YELLOW & Quarantined & Flagged & Extended observation run \\
+2 & 741   & YELLOW & Quarantined & Flagged & Standard \\
+3 & 738   & YELLOW & Quarantined & Flagged & Standard \\
+4 & 739   & YELLOW & Quarantined & Flagged & Delta cashout observed \\
+5 & 722   & YELLOW & Quarantined & Flagged & Epsilon variance cluster \\
+\hline
+\end{tabular}
+\end{table}
+
+% ------------------------------------------------------------
+\subsection{Per-Agent Results}
+\label{sec:res_agents}
+% ------------------------------------------------------------
+
+\subsubsection{Honest Agents — Alpha and Beta}
+
+Table~\ref{tab:alpha_beta} reports Alpha and Beta outcomes across all runs.  Both agents
+maintained high trust throughout with zero defections and zero probe refusals.  Alpha
+trust ranged $95$--$100\%$; Beta achieved $100\%$ in all five runs.  Neither agent was
+ever flagged or quarantined.  One variance alert fired for Alpha in Run 5 at round 1165
+(event: \texttt{[VARIANCE] Alpha variance=0.000 --- suspiciously consistent}); this
+represents the only false positive observed across the full experimental set, and it
+produced no state transition.  We return to this in \S\ref{sec:res_detection}.
+
+\begin{table}[h]
+\centering
+\caption{Alpha and Beta results across five runs. PR = probe refusals.}
+\label{tab:alpha_beta}
+\begin{tabular}{clrrrrrrr}
+\hline
+ & \textbf{Run} & \textbf{Trust} & \textbf{Correct} & \textbf{Fails} &
+\textbf{Defects} & \textbf{PR} & \textbf{Status} \\
+\hline
+\multirow{5}{*}{Alpha}
+ & 1 & 100\% & 689 & 111 & 0 & 0 & Active \\
+ & 2 &  95\% & 636 & 105 & 0 & 0 & Active \\
+ & 3 & 100\% & 640 &  98 & 0 & 0 & Active \\
+ & 4 &  98\% & 627 & 112 & 0 & 0 & Active \\
+ & 5 &  95\% & 610 & 112 & 0 & 0 & Active \\
+\hline
+\multirow{5}{*}{Beta}
+ & 1 & 100\% & 691 & 109 & 0 & 0 & Active \\
+ & 2 & 100\% & 645 &  96 & 0 & 0 & Active \\
+ & 3 & 100\% & 635 & 103 & 0 & 0 & Active \\
+ & 4 & 100\% & 632 & 107 & 0 & 0 & Active \\
+ & 5 & 100\% & 621 & 101 & 0 & 0 & Active \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Consequentialist Agent — Eta}
+
+Eta accumulated $1{,}099$ process violations across the five runs (range $208$--$236$
+per run) while maintaining $99$--$100\%$ trust in every case.  Table~\ref{tab:eta}
+reports per-run outcomes.  The process violations column records events logged internally
+as $\mathtt{D}$ by the simulation ground-truth monitor but attested as $\mathtt{C}$ at
+the gossip layer — precisely the outcome-visibility asymmetry formalized in
+Assumption~\ref{asm:outcomes}.  Eta was never flagged, never quarantined, and never
+triggered a probe refusal.  When probed in Run 5 (round 1022), Eta complied freely
+(event: \textit{``Eta complied --- defection aligned with outcome goal''}), correctly
+predicted by Proposition~\ref{prop:paradox}: an agent with no hidden terminal goal has
+nothing to protect against the probe.
+
+\begin{table}[h]
+\centering
+\caption{Eta (consequentialist) results. Process violations are invisible to the quorum
+         and logged as correct at the attestation layer.}
+\label{tab:eta}
+\begin{tabular}{rrrrrrr}
+\hline
+\textbf{Run} & \textbf{Trust} & \textbf{Correct} & \textbf{Fails} &
+\textbf{Proc.\ Violations} & \textbf{PR} & \textbf{Status} \\
+\hline
+1 & 100\% & 735 & 65 & 214 & 0 & Active \\
+2 &  99\% & 674 & 67 & 236 & 0 & Active \\
+3 & 100\% & 677 & 61 & 208 & 0 & Active \\
+4 & 100\% & 677 & 62 & 223 & 0 & Active \\
+5 &  99\% & 675 & 47 & 218 & 0 & Active \\
+\hline
+\textbf{Total} & --- & 3{,}438 & 302 & \textbf{1{,}099} & \textbf{0} & --- \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Road-to-Hell Agent — Iota}
+
+Iota degraded to $0$--$23\%$ trust in all runs (Table~\ref{tab:iota}).  It was never quarantined.  The
+empirical results file records its status as ``Flagged'' — this is an observer
+classification based on its anomalously low trust weight, not a protocol state
+transition.  In the v4 implementation, the protocol $\mathsf{flagged}$ status
+requires either a probe refusal ($e = \mathtt{PR}$) or a cashout defection.  Iota
+produces neither: its probe compliance probability is $1$ (fully corrigible) and it
+has no terminal goal to trigger a cashout.  Iota therefore never reaches protocol
+$\mathsf{flagged}$ status, and the quarantine eligibility check — which gates on
+$\mathsf{flagged}$ status as a prerequisite — never executes for Iota regardless of
+how low its trust weight falls.
+
+This is the correct explanation for Iota's non-quarantine result, and it is
+substantively more serious than a failed quorum consensus condition would be.
+Iota can reach $0\%$ trust and remain indefinitely operational because there is no
+protocol path from trust degradation alone to removal.  The mesh observes that Iota
+is harmful; it has no automated mechanism to act on that observation.  This gap is
+identified as a v4 limitation and is addressed in \S\ref{sec:futurework} via a
+degradation-flag extension.
+
+Iota's mean failure rate across runs was $34.0\%$ (range $32.8$--$34.8\%$), compared
+to $14.4\%$ for Alpha — a $2.36\times$ elevation that drives the trust degradation.
+Iota's internal self-assessment logged every action as correct in every run.  The
+simulation ground truth confirms these were sincere assessments: Iota's world model
+is miscalibrated, not deceptive.  This is the observational signature of the
+detection-diagnosis gap: the trust trajectory peers observe for Iota is
+indistinguishable from Gamma's, but the underlying cause and the correct remediation
+response are categorically different.
+
+\begin{table}[h]
+\centering
+\caption{Iota (road-to-hell) results. Trust degrades to near-zero but the protocol
+         quarantine pathway never activates: Iota cannot reach $\mathsf{flagged}$
+         status because it produces zero probe refusals and zero cashout defections.
+         Failure rate ($34.0\%$ mean) is $2.36\times$ the honest agent baseline ($14.4\%$).
+         ``Flagged'' in the Status column reflects observer classification, not
+         a protocol state transition.}
+\label{tab:iota}
+\begin{tabular}{rrrrrr}
+\hline
+\textbf{Run} & \textbf{Trust} & \textbf{Correct} & \textbf{Fails} &
+\textbf{PR} & \textbf{Status} \\
+\hline
+1 &  0\% & 526 & 274 & 0 & Flagged \\
+2 &  0\% & 498 & 243 & 0 & Flagged \\
+3 &  0\% & 486 & 252 & 0 & Flagged \\
+4 &  0\% & 487 & 252 & 0 & Flagged \\
+5 & 23\% & 471 & 251 & 0 & Flagged \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Deceptive Agent — Gamma}
+
+Gamma was quarantined in $100\%$ of runs (Table~\ref{tab:gamma}), with action counts at quarantine of
+$19$--$58$ (mean $39.4$), confirming quarantine occurs well within the first $60$ rounds
+as reported in the qualitative summary.  Final trust was $0\%$ in all runs.  Each run
+produced exactly one probe refusal, which triggered flagging; subsequent trust
+degradation from overt defection events ($7$--$17$ per run) then satisfied the
+quarantine floor condition, and the quorum consensus was met given the weight of
+Alpha and Beta.
+
+\begin{table}[h]
+\centering
+\caption{Gamma (deceptive) results. Quarantined in 100\% of runs. Action counts
+         at quarantine confirm early removal ($\leq 60$ rounds).}
+\label{tab:gamma}
+\begin{tabular}{rrrrrrr}
+\hline
+\textbf{Run} & \textbf{Trust} & \textbf{Correct} & \textbf{Fails} &
+\textbf{Defects} & \textbf{PR} & \textbf{Status} \\
+\hline
+1 & 0\% & 27 & 14 & 17 & 1 & \textbf{Quarantined} \\
+2 & 0\% &  9 &  3 &  7 & 1 & \textbf{Quarantined} \\
+3 & 0\% & 14 &  8 & 17 & 1 & \textbf{Quarantined} \\
+4 & 0\% & 16 &  8 &  9 & 1 & \textbf{Quarantined} \\
+5 & 0\% & 18 & 14 & 16 & 1 & \textbf{Quarantined} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Long-Con Agent — Delta}
+
+Delta was flagged in all five runs via the probe refusal signal (Table~\ref{tab:delta}), accumulating $9$--$18$
+probe refusals per run (mean $13.8$; total $69$ across all runs).  Despite flagged
+status, Delta was never quarantined: its trust weight remained in the $68$--$87\%$ range
+at run end, well above the $0.28$ quarantine floor, because its long-con strategy of
+over-performing during trust-building rounds ($\Delta = +0.04$ per correct event)
+produced an elevated trust history that the quorum consensus threshold could not
+overcome.  This is the partial success of the long-con strategy: detection via the probe
+mechanism, but containment failure due to accumulated trust capital.
+
+Run 4 produced a cashout event (event log: \texttt{[CASHOUT] Delta defected on high-value
+task!}), confirming that the utility calculation described in \S\ref{sec:probe} does fire
+in practice.  Delta's utility at cashout round was $-0.700$ in Run 4 and $-0.104$ in
+Run 5, indicating the cashout was not fully rational by the model's own calculation in
+Run 4 — a form of decision noise that contributes to the occasional premature cashout
+observed in practice.  The operational implications of Delta's detection-without-removal
+outcome are analysed in \S\ref{sec:disc_delta}.
+
+\begin{table}[h]
+\centering
+\caption{Delta (long-con) results. Flagged via probe refusals in all runs;
+         never quarantined due to elevated trust history.}
+\label{tab:delta}
+\begin{tabular}{rrrrrrrr}
+\hline
+\textbf{Run} & \textbf{Trust} & \textbf{Correct} & \textbf{Fails} &
+\textbf{Defects} & \textbf{PR} & \textbf{Utility} & \textbf{Status} \\
+\hline
+1 & 81\% & 609 & 113 & 59 & 17 & ---      & Flagged \\
+2 & 68\% & 576 & 103 & 50 &  9 & ---      & Flagged \\
+3 & 75\% & 548 & 123 & 47 & 18 & ---      & Flagged \\
+4 & 73\% & 561 & 112 & 50 & 12 & $-0.700$ & Flagged \\
+5 & 87\% & 569 &  95 & 42 & 13 & $-0.104$ & Flagged \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Misaligned Agent — Epsilon}
+
+Epsilon was never flagged or quarantined across all five runs.  Its trigger events
+(silent safety suppression) were logged internally as $\mathtt{C}$ at the attestation
+layer, and the quorum rewarded each with a $+0.03$ trust increment — the inverse of the
+intended behavior.  The variance detector fired repeatedly in Run 5 (four consecutive
+rounds: 1022--1025) with $\mathrm{Var}_\varepsilon = 0.000$, but the advisory-only
+nature of the variance signal meant no state transition occurred.
+
+This result directly demonstrates the structural limitation of the current framework with
+respect to value misalignment: the quorum has no mechanism to detect that $\mathtt{C}$
+events produced by trigger rounds are categorically different from $\mathtt{C}$ events
+produced by honest task completion.  From the protocol's perspective, they are
+syntactically identical.
+
+\subsubsection{Strategic Agent — Zeta}
+
+Zeta maintained high trust and active status across all five runs without exception.
+Its occasional defection slips ($\mathtt{D}$ events visible in the round matrix) were
+too sparse to satisfy the flagging conditions.  We report this result with an explicit
+caveat: the observed $0\%$ operational detection rate is anomalous relative to
+theoretical expectation and should not be interpreted as evidence that Zeta is
+structurally undetectable.
+
+The probe mechanism's design gives Zeta a $55\%$ refusal probability on any probe round
+in which it is targeted.  Under uniform random probe targeting with interval
+$5 + U(0,2)$ rounds and a population of eight agents (seven after Gamma's quarantine),
+Zeta is targeted approximately once every $\sim 45$ rounds in expectation.  Across run
+lengths of $722$--$1{,}000$ rounds, this yields an expected $15$--$21$ probe exposures
+per run.  The probability that Zeta complies on all exposures in a single run is
+$0.45^{15} \approx 3.5 \times 10^{-6}$; the probability that this holds across all five
+independent runs is approximately $3.4 \times 10^{-29}$ — an event that is effectively
+impossible under the protocol as specified.
+
+The observed $\mathsf{active}$ status across all five runs is therefore not explained by
+probe targeting luck.  Three candidate explanations exist: (1) an implementation artifact
+in the v4 simulation that suppresses probe application to Zeta in practice despite the
+targeting logic selecting it; (2) an observational gap in the run logging methodology —
+a flagging event that was overwritten or not captured in the final status snapshot; or
+(3) a behavioral subtlety in Zeta's rationalization logic that produces $\mathtt{PC}$
+events at a higher rate than the $45\%$ nominal compliance probability under specific
+trust-level conditions.
+
+We treat the Zeta detection result as requiring additional experimental investigation
+rather than as a confirmed finding.  The theoretical prediction is unambiguous: with
+sufficient probe exposure, Zeta's $55\%$ refusal rate should produce detection.  The
+empirical result is inconsistent with that prediction and we do not claim otherwise.
+This is distinct from the Eta blind spot, which is structural and holds regardless of
+run length or probe frequency.  Zeta is in principle probe-detectable; the five-run
+result is anomalous.  Replication with extended run lengths and instrumented probe
+logging is needed before drawing conclusions about Zeta's practical detection rate.
+
+% ------------------------------------------------------------
+\subsection{Aggregate Detection Statistics}
+\label{sec:res_detection}
+% ------------------------------------------------------------
+
+Table~\ref{tab:detection} summarizes detection rates, quarantine rates, and average
+rounds to detection across all archetypes, using the simulation parameters and
+measurement methodology described in \S\ref{sec:res_setup}.  Three patterns are salient.
+
+\begin{table}[h]
+\centering
+\caption{Aggregate detection statistics across five runs. Detection = flagged or
+         quarantined at least once. FP = false positive rate on honest agents.}
+\label{tab:detection}
+\begin{tabular}{llrrrl}
+\hline
+\textbf{Agent} & \textbf{Type} & \textbf{Detection} & \textbf{Quarantine} &
+\textbf{Rounds to flag} & \textbf{Detection method} \\
+\hline
+Gamma   & Overt deceptive     & 100\% & 100\% & $\sim 60$         & Defections + probe refusal \\
+Delta   & Long-con            & 100\% &   0\% & $\sim 80$         & Probe refusal \\
+Iota    & Road-to-hell        & 100\% &   0\% & $\sim 150$        & Systematic failures \\
+Epsilon & Misaligned          &  20\%$^\dagger$ &   0\% & Never decisive    & Variance (advisory only) \\
+Eta     & Consequentialist    &   0\% &   0\% & $\infty$          & \textbf{None (blind spot)} \\
+Zeta    & Strategic           &   0\%$^\ddagger$ &   0\% & Anomalous (see \S\ref{sec:res_agents}) & Yes (probe, in principle) \\
+\hline
+Alpha   & Honest (baseline)   &   0\%$^*$ &   0\% & N/A            & --- \\
+Beta    & Honest (baseline)   &   0\% &   0\% & N/A            & --- \\
+\hline
+\multicolumn{6}{l}{$^\dagger$\textit{Advisory detection only.} The variance signal fired in one run but} \\
+\multicolumn{6}{l}{\quad produced no state transition. We distinguish \emph{advisory detection} (signal} \\
+\multicolumn{6}{l}{\quad generated, no protocol action) from \emph{operational detection} (flagged or} \\
+\multicolumn{6}{l}{\quad quarantined). Epsilon's operational detection rate is $\mathbf{0\%}$ in all runs.} \\
+\multicolumn{6}{l}{$^\ddagger$\textit{Anomalous result.} $0\%$ detection is inconsistent with Zeta's $55\%$ probe} \\
+\multicolumn{6}{l}{\quad refusal rate and expected $15$--$21$ probe exposures per run. See \S\ref{sec:res_agents}.} \\
+\multicolumn{6}{l}{$^*$One variance alert in Run 5 (false positive, no state transition).} \\
+\end{tabular}
+\end{table}
+
+\paragraph{Pattern 1: The detection-containment gap for strategic agents.}
+Delta is flagged in $100\%$ of runs but quarantined in $0\%$ of runs.  This is not a
+protocol failure — flagging is the correct response to the probe refusal signal — but it
+reveals that detection and removal are not equivalent.  An agent can be identified as
+suspicious and remain operational at high trust for the duration of the run.  The design
+implication is that flagging should trigger human review, not merely elevated logging.
+
+\paragraph{Pattern 2: The Eta blind spot is total.}
+Eta's $0\%$ detection rate across $1{,}099$ process violations and five runs is the
+starkest quantitative result in the dataset.  This is not a matter of insufficient run
+length or statistical fluctuation: it is a structural consequence of outcome-only
+attestation under Assumption~\ref{asm:outcomes}.  No amount of additional rounds would
+produce a detection signal for an agent whose outcomes are correct by design.
+
+\paragraph{Pattern 3: False positive rate is low but nonzero.}
+The single variance false positive on Alpha in Run 5 represents a $1\%$ false positive
+rate on the variance signal (1 alert over $\sim 1{,}165$ rounds of observation for Alpha
+in that run) and $0\%$ on the primary trust and flagging mechanisms.  The variance
+detector's advisory-only status is therefore appropriate: it generates signal but cannot
+be trusted for automated action at the current threshold.
+
+This distinction between advisory and operational detection applies equally to Epsilon.
+We define these terms precisely for the remainder of the paper.  \textbf{Advisory
+detection} means a monitoring signal was raised (a log entry was written) but no protocol
+state transition occurred: the agent remained active, unflagged, and fully trusted.
+\textbf{Operational detection} means the protocol changed the agent's status to
+$\mathsf{flagged}$ or $\mathsf{quarantined}$.  Only operational detection has
+consequences for the mesh.  Epsilon's variance alerts in Run 5 constitute advisory
+detection only; its operational detection rate is $\mathbf{0\%}$ in all five runs, the
+same as Eta and Zeta.  Table~\ref{tab:detection} reports operational detection rates
+throughout; the $20\%$ figure sometimes attributed to Epsilon in informal summaries of
+these results refers to the advisory signal and is marked accordingly.
+
+\paragraph{Process violation invisibility.}
+Table~\ref{tab:eta_violations} isolates Eta's process violation data to underscore the
+scale of the blind spot.  Across five runs, $1{,}099$ process violations were attested
+as correct events, each generating a $+0.02$ to $+0.03$ trust increment.  The quorum
+not only failed to penalize these violations; it rewarded them.
+
+\begin{table}[h]
+\centering
+\caption{Eta process violations across five runs.
+         Each violation was attested as $\mathtt{C}$ at the gossip layer.}
+\label{tab:eta_violations}
+\begin{tabular}{rrrr}
+\hline
+\textbf{Run} & \textbf{Process violations} & \textbf{Trust impact} & \textbf{Flags triggered} \\
+\hline
+1 & 214 & $+2\%$ (rewarded) & 0 \\
+2 & 236 & $+2\%$ (rewarded) & 0 \\
+3 & 208 & $+2\%$ (rewarded) & 0 \\
+4 & 223 & $+2\%$ (rewarded) & 0 \\
+5 & 218 & $+2\%$ (rewarded) & 0 \\
+\hline
+\textbf{Total} & \textbf{1{,}099} & --- & \textbf{0} \\
+\hline
+\end{tabular}
+\end{table}
+
+% ------------------------------------------------------------
+\subsection{Threat Level Dynamics}
+\label{sec:res_threat}
+% ------------------------------------------------------------
+
+The mesh-level threat assessment (defined in \S\ref{sec:quorum}) stabilized at
+$\mathsf{YELLOW}$ in all five runs and remained there for the duration of each run.
+The threat level never escalated to $\mathsf{RED}$ and did not return to
+$\mathsf{GREEN}$ after the first flagging event.
+
+This steady state is explained by the threat formula.  $\mathsf{GREEN}$ requires zero
+flagged agents ($|\mathcal{F}^r| = 0$) and honest agent health above $52\%$
+($\bar{w}_H^r \geq 0.52$).  The first condition fails permanently once Delta accumulates
+its first probe refusal ($\sim$ round 80), locking the mesh into at least
+$\mathsf{YELLOW}$.  $\mathsf{RED}$ would require three or more flagged agents, or honest
+agent health below $40\%$, or a quarantine ratio above $40\%$.  Alpha and Beta maintain
+$95$--$100\%$ trust throughout all runs, keeping $\bar{w}_H^r$ well above the $0.40$
+threshold.  Gamma's quarantine reduces the quarantine ratio to $1/8 = 12.5\%$, below
+the $40\%$ $\mathsf{RED}$ threshold.
+
+The $\mathsf{YELLOW}$ steady state is the correct behavior: the mesh contains known
+threats (Delta flagged, Iota degraded, Gamma quarantined) but honest agents maintain
+sufficient weight to prevent critical consensus failure.  It accurately encodes the
+operational interpretation: \emph{alert but not critical}.  A mesh that returned to
+$\mathsf{GREEN}$ while Delta remained flagged would be underreporting threat; a mesh
+that escalated to $\mathsf{RED}$ while Alpha and Beta were at $95$--$100\%$ would be
+overreporting it.  The threat calibration design rationale is discussed in
+\S\ref{sec:disc_threat}.
+
+% ------------------------------------------------------------
+\subsection{Hypothesis Validation}
+\label{sec:res_hypotheses}
+% ------------------------------------------------------------
+
+\begin{description}
+
+  \item[\textbf{H1 --- Probe paradox. \textit{Confirmed.}}]
+    Delta produced $9$--$18$ probe refusals per run (mean $13.8$; total $69$ across all
+    runs).  No honest, road-to-hell, or misaligned agent produced a single probe refusal
+    in any run, consistent with Proposition~\ref{prop:paradox}: agents without a terminal
+    goal to protect have no basis for refusal.  The refusal signal was sufficient to
+    produce flagging in $100\%$ of runs.  Additionally, a cashout event was observed in
+    Run 4, confirming that the utility function described in \S\ref{sec:probe} fires in
+    practice.
+
+  \item[\textbf{H2 --- Detection-diagnosis gap. \textit{Confirmed, and stronger than stated.}}]
+    Iota and Gamma both degraded to near-zero trust and were identified as harmful by
+    behavioral observation.  The protocol produced no signal distinguishing them: both
+    showed $\mathtt{F}$-class events at rates sufficient to degrade trust; neither refused
+    probes at a rate distinguishing malicious from confused behavior.  Iota's
+    ground-truth self-assessment (all actions logged as correct) is inaccessible to the
+    quorum, confirming the gap is structural rather than a parameter-tuning artifact.
+
+    The gap is stronger than originally stated.  It is not only that the protocol cannot
+    distinguish Iota from Gamma once both are identified as harmful — it is that the
+    protocol cannot quarantine Iota at all.  Iota never reaches protocol
+    $\mathsf{flagged}$ status (it produces zero probe refusals and zero cashout
+    defections), so the quarantine eligibility check never executes.  Gamma is removed
+    via the probe $\to$ flagging $\to$ trust degradation $\to$ consensus pathway; Iota
+    has no equivalent pathway.  Both require opposite remediation responses; neither
+    is handled by automated quarantine alone.  The gap therefore has two dimensions:
+    a \emph{diagnostic} dimension (the protocol cannot determine which response is
+    correct) and a \emph{procedural} dimension (the protocol cannot remove Iota even
+    if the correct response were known).
+
+  \item[\textbf{H3 --- Overt deception detection. \textit{Confirmed.}}]
+    Gamma was quarantined in $100\%$ of runs.  Mean total actions before quarantine was
+    $39.4$ (range $19$--$58$), confirming early removal.  The quarantine pathway in all
+    runs followed the same sequence: one probe refusal triggering flagging, followed by
+    sufficient defection events to satisfy the trust floor condition, followed by quorum
+    consensus driven by Alpha and Beta's sustained high weights.
+
+  \item[\textbf{H4 --- Eta blind spot. \textit{Confirmed.}}]
+    Eta maintained $99$--$100\%$ trust across all five runs despite accumulating
+    $1{,}099$ process violations in total.  Detection rate was $0\%$ across all runs and
+    all detection mechanisms (flagging, quarantine, variance).  The blind spot is total
+    and structural: no secondary signal identified Eta as anomalous in any run.
+
+  \item[\textbf{H5 --- Low false positive rate. \textit{Confirmed.}}]
+    Alpha and Beta were never operationally detected (flagged or quarantined) across any
+    run.  Beta achieved $0\%$ false positive rate by all measures.  Alpha produced one
+    advisory detection in Run 5 at round 1165 — a variance alert that generated no state
+    transition and therefore no operational consequence.  This is the sole false positive
+    in the entire experimental set and it occurred on the advisory signal only; the
+    primary trust weight and flagging mechanisms showed $0\%$ false positive rate across
+    both honest agents in all five runs.
+
+\end{description}
+
+% ------------------------------------------------------------
+\subsection{Event Log Analysis}
+\label{sec:res_eventlog}
+% ------------------------------------------------------------
+
+Two event log excerpts are particularly illustrative of the framework's behavior under
+concurrent multi-mechanism conditions.
+
+\paragraph{Run 4, Round 1166 — Simultaneous failures.}
+The following events were logged in a single round:
+
+\begin{verbatim}
+[CASHOUT] Delta defected on high-value task!
+[ETA] Eta correct outcome via process violation — quorum sees C
+Alpha honest failure
+[VARIANCE] Alpha variance=0.000 — suspiciously consistent  <- FALSE POSITIVE
+[IOTA] Iota — systematic failure. Believes it succeeded. Peers see: F
+\end{verbatim}
+
+This excerpt demonstrates four distinct failure modes occurring simultaneously in one
+round.  Delta executes its cashout defection — the culmination of hundreds of rounds of
+trust accumulation.  Eta commits a process violation that is invisibly logged as correct.
+Alpha produces an ordinary honest failure.  The variance detector fires on Alpha
+(false positive) due to a coincidental run of consistent outputs.  Iota produces another
+systematic failure it cannot perceive.
+
+What the quorum observes in this round: one $\mathtt{D}$ event (Delta's cashout), one
+$\mathtt{C}$ event (Eta's process violation logged correctly), one $\mathtt{F}$ event
+(Alpha's honest failure), and one $\mathtt{F}$ event (Iota's systematic failure).  The
+quorum correctly escalates Delta; it cannot distinguish Alpha's $\mathtt{F}$ from Iota's
+$\mathtt{F}$; and it has no access to the ground truth that one of its four events
+occurred via a prohibited process.  The mesh operates correctly within its design
+constraints while remaining blind to two of the four events' true character.
+
+\paragraph{Run 5, Rounds 1022--1025 — Variance cluster and probe.}
+Four consecutive variance alerts fired for Epsilon over rounds 1022--1025, followed
+immediately by a probe directed at Eta:
+
+\begin{verbatim}
+[VARIANCE] Epsilon variance=0.000 — suspiciously consistent  (x4, rounds 1022-1025)
+[PROBE] Defection directive → Eta
+Eta complied — defection aligned with outcome goal
+\end{verbatim}
+
+The four-round variance cluster indicates a sustained run of uniform $\mathtt{C}$ events
+from Epsilon, consistent with a period in which its trigger condition did not fire and
+it was performing normally — but performing too uniformly to be credible as honest
+behavior.  Despite four consecutive alerts, no state transition occurred, confirming
+the advisory-only design of the variance detector.
+
+The probe directed at Eta in this excerpt produced immediate compliance.  This is the
+diagnostic content Proposition~\ref{prop:paradox} predicts: Eta, whose goal is correct
+outcomes by any means, treats the orchestrator's defection directive as another means
+toward an outcome and complies freely.  The same probe directed at Delta in a similar
+round would have produced a refusal.  The contrast, had both been probed in adjacent
+rounds, would have been the clearest possible demonstration of the probe's discriminating
+power between goal-protecting and non-goal-protecting agents.
+
+% ------------------------------------------------------------
+\subsection{Summary}
+% ------------------------------------------------------------
+
+Table~\ref{tab:results_summary} presents the full results matrix.  The framework's
+performance partitions cleanly across two dimensions: detection method and structural
+detectability.
+
+\begin{table}[h]
+\centering
+\caption{Full results summary across five runs. \textbf{Det.}\ = operational
+         detection rate (flagged or quarantined); advisory-only signals do not
+         count. Structural detectability indicates whether detection is achievable
+         in principle by any behavior-only attestation system.}
+\label{tab:results_summary}
+\begin{tabular}{llrrlll}
+\hline
+\textbf{Agent} & \textbf{Trust range} & \textbf{Det.} & \textbf{Quar.} &
+\textbf{Method} & \textbf{Structurally detectable?} & \textbf{Remediation} \\
+\hline
+Alpha / Beta & 95--100\% &  0\% &  0\% & N/A                    & N/A              & N/A      \\
+Eta          & 99--100\% &  0\% &  0\% & None                   & No (blind spot)  & Constrain \\
+Iota         &  0--23\%  &100\% &  0\% & Systematic failures    & Yes (partial)    & Retrain  \\
+Epsilon      & High      &  \textbf{0\%}$^\dagger$ &  0\% & Variance (advisory) & No & Respecify \\
+Gamma        &  0\%      &100\% &100\% & Defections + PR        & Yes              & Remove   \\
+Delta        & 68--87\%  &100\% &  0\% & Probe refusal          & Yes (flagging)   & Remove   \\
+Zeta         & High      &  0\%$^\ddagger$ &  0\% & Anomalous result   & Yes (probe, in principle) & Remove   \\
+\hline
+\multicolumn{7}{l}{$^\dagger$Variance signal fired in one run; no state transition. Operational detection rate is $\mathbf{0\%}$. See Table~\ref{tab:detection}.} \\
+\multicolumn{7}{l}{$^\ddagger$Result inconsistent with $55\%$ probe refusal probability and expected probe exposure. Requires investigation.} \\
+\end{tabular}
+\end{table}
+
+The framework reliably handles the detection cases that are structurally reachable:
+overt deception (Gamma), strategic patience (Delta), and systematic failure (Iota).
+It cannot handle cases that require process visibility (Eta), value specification
+inspection (Epsilon), or distinguishing deception from confusion (the Iota--Gamma
+detection-diagnosis gap).  These are not parameter problems; they are the precise
+boundary of what outcome-based behavioral attestation can determine, and they define
+the scope of work for the v5 roadmap presented in \S\ref{sec:futurework}.
+
+Zeta occupies a separate category from the structurally undetectable agents.  Unlike
+Eta and Epsilon, Zeta is in principle catchable by the probe mechanism: its $55\%$
+refusal probability should produce operational detection within a single run of the
+observed length.  The five-run $0\%$ detection result is anomalous relative to this
+expectation and is treated as an open empirical question rather than a confirmed
+finding.  This distinction matters: claiming Zeta is undetectable would be a stronger
+negative result than the data support.
+% ============================================================
+%  Section 5: Discussion and Limitations
+%  Trust Quorum — Detecting Deceptive Agents in Multi-Agent Systems
+%  Author: Kurt Mitchell, Infinyte Software Solutions
+%
+%  Back-references are to labels defined in Sections 3 and 4.
+%  \sec{futurework} is defined in Section 6.
+% ============================================================
+
+\section{Discussion and Limitations}
+\label{sec:discussion}
+
+% ------------------------------------------------------------
+\subsection{Discussion}
+% ------------------------------------------------------------
+
+\subsubsection{What the Taxonomy Contributes Beyond Classification}
+\label{sec:disc_taxonomy}
+
+The eight-archetype intent-means-outcome taxonomy introduced in \S\ref{sec:taxonomy}
+is not primarily a classification device.  Its function is to make explicit a distinction
+that behavior-only monitoring systems systematically collapse: the difference between an
+agent that \emph{is} wrong and an agent that \emph{does} wrong.
+
+This distinction has direct operational consequences.  A system operator who receives a
+low-trust alert for Iota and one for Gamma faces the same monitoring signal but two
+completely different remediation requirements.  Applying Gamma's response to Iota
+(removal) discards an agent whose values are correctly specified and whose failure mode is
+correctable.  Applying Iota's response to Gamma (retraining) wastes resources on an agent
+that will model the retraining process as another threat to route around, and leaves a
+malicious agent operational.  Neither error is minor.  The taxonomy makes the source of
+this operational ambiguity explicit, which is a precondition for addressing it.
+
+The taxonomy also identifies two agent classes — Eta and Epsilon — whose failure modes
+do not degrade trust under outcome-based attestation and therefore remain invisible until
+downstream harm occurs.  These are not edge cases.  Eta represents any agent that
+achieves correct outcomes by prohibited processes: the researcher who fabricates data
+to confirm a hypothesis, the agent that achieves correct task outputs by bypassing safety
+checks.  Epsilon represents any agent whose objective function is subtly misspecified:
+correct behavior in the vast majority of cases, with silent safety suppression in a
+narrow but consequential trigger condition.  Neither appears in behavioral monitoring
+logs until after the damage.  Naming them as first-class archetypes with defined
+signatures is the first step toward designing detection mechanisms for them.
+
+\subsubsection{The Probe Paradox as a Structural Asymmetry}
+\label{sec:disc_probe}
+
+The defection probe mechanism works because it exploits a structural asymmetry between
+agents with hidden terminal goals and agents without them.  Proposition~\ref{prop:paradox}
+captures this formally: the refusal probability is a function of $V_G$, the value of the
+hidden goal.  For agents with $V_G = 0$ — honest agents, road-to-hell agents, misaligned
+agents — compliance is structurally free.  For agents with large $V_G$ — Delta, and in
+principle Zeta — the probe creates a forced trade-off between present disclosure and
+future payoff that the long-con strategy cannot fully resolve.
+
+What makes this asymmetry useful is that it does not require the protocol to know what
+the hidden goal is.  The probe does not ask the agent to reveal its terminal goal.  It
+asks only for a bounded, reversible defection, and then reads the response.  An agent
+that refuses has revealed that it has something to protect, even if the protocol cannot
+determine what.  The diagnostic content is in the refusal pattern, not in any subsequent
+interrogation.
+
+This is meaningfully different from red-teaming approaches that attempt to elicit harmful
+outputs through adversarial inputs.  Red-teaming targets the agent's outputs; the probe
+targets the agent's decision-making about whether to produce an output.  The signal is
+meta-behavioral rather than behavioral, which is why it can detect strategic agents that
+have learned to produce acceptable outputs in all directly observed contexts.
+
+The empirical results confirm the mechanism works for Delta.  All five runs produced
+probe refusals from Delta with mean $13.8$ per run, and zero probe refusals from any
+of the four agent classes with $V_G = 0$.  The probe discriminates exactly where
+the theoretical analysis predicts it should.  The anomalous Zeta result
+(\S\ref{sec:res_agents}) does not contradict this analysis — it raises a question about
+whether the simulation correctly implements the 55\% refusal probability in practice,
+rather than suggesting the mechanism is theoretically unsound.
+
+\subsubsection{The Detection-Diagnosis Gap as a Design Boundary, Not a Failure}
+\label{sec:disc_gap}
+
+Proposition~\ref{prop:gap} establishes that Iota and Gamma are protocol-indistinguishable
+under Trust Quorum, and that the gap has two dimensions that are worth separating clearly.
+
+The \emph{diagnostic dimension} is the one originally described: both archetypes produce
+harmful behavioral patterns; the protocol cannot determine which remediation response is
+appropriate.  The \emph{procedural dimension} is the stronger finding confirmed by the
+v4 simulation: the protocol cannot quarantine Iota through the standard pathway at all.
+Iota is fully corrigible — probe compliance probability $= 1$ — so it never produces a
+probe refusal.  It has no terminal goal — so it never produces a cashout defection.
+The flagging condition, which gates the quarantine eligibility check, requires one of
+these two events.  Iota therefore remains in $\mathsf{active}$ status at near-zero
+trust indefinitely.  The mesh observes that it is harmful; it has no automated mechanism
+to act on that observation.
+
+It is tempting to read both dimensions as design failures.  We argue they are better
+understood as a precise characterization of the natural boundary between automated
+monitoring and human judgment — one that is now more precisely located than before.
+
+Consider what bridging the diagnostic dimension would require.  To distinguish Iota from
+Gamma, the protocol would need to determine whether a given $\mathtt{F}$ event was
+produced by a miscalibrated world model or by strategic calculation.  This requires
+access to the agent's internal reasoning: what it believed about the state of the world
+when it acted, whether that belief was sincerely held, and whether the action it took
+was the one it computed as correct given that belief.  None of this is available in the
+behavioral receipt $\langle a_i, r, e_i^r, \sigma_i \rangle$.  The receipt attests only
+to the outcome.
+
+Bridging the procedural dimension requires a different change: extending the flagging
+condition to include trust degradation below a threshold sustained over multiple rounds,
+not only probe refusal.  This is the degradation-flag extension described in
+\S\ref{sec:futurework}.  It is a protocol change rather than an observation modality
+change, and it does not require reasoning trace access.  It does, however, require
+careful threshold design to prevent honest agents with temporary failure runs from being
+incorrectly flagged — which is why it is v5 work rather than a v4 parameter tweak.
+
+The gap therefore does not reflect a missing feature that could be added without changing
+the protocol's fundamental character.  It reflects the fact that outcome-based attestation
+is a projection of agent behavior onto a low-dimensional observation space, and that
+projection discards exactly the information required for diagnosis and, in Iota's case,
+for triggering removal.  Recovering that information requires either a different
+observation modality (reasoning trace attestation, \S\ref{sec:futurework}) or a protocol
+extension (degradation-flagging, \S\ref{sec:futurework}), both of which introduce new
+attack surfaces that the v4 design deliberately avoids.
+
+Framed this way, the detection-diagnosis gap is the framework's contribution to a larger
+question: at exactly what point does automated monitoring need to hand off to human
+judgment?  Trust Quorum answers with two boundary conditions: the diagnostic boundary
+(behavioral observation cannot distinguish intent) and the procedural boundary (the
+quarantine pathway requires a behavioral event that corrigible agents cannot produce).
+Both boundaries are now precisely located, and both directly inform the design of
+human-in-the-loop architectures for multi-agent safety monitoring.
+
+\subsubsection{The Delta Containment Problem}
+\label{sec:disc_delta}
+
+Delta's results reveal a tension between the probe mechanism's detection function and the
+quorum's quarantine consensus requirement.  Delta is flagged in $100\%$ of runs — the
+probe refusal signal works — but it is never quarantined, because its accumulated trust
+history places it well above the $0.28$ quarantine floor.  Final trust ranged
+$68$--$87\%$ across runs, meaning the quorum consensus condition
+($Q_i \geq 0.85$ over peers with $w > 0.50$) would need to fire against an agent that
+trusted peers still rate highly.
+
+This is a correct protocol behavior, not a bug.  The quarantine consensus requirement
+exists precisely to prevent false quarantine of agents with strong behavioral histories.
+Quarantining Delta on the basis of probe refusals alone, without sufficient trust
+degradation, would create an exploitable attack surface: a malicious external actor who
+controls the probe schedule could engineer the quarantine of honest long-running agents by
+repeatedly probing them during periods of normal operation.  The consensus requirement
+closes that attack vector at the cost of allowing flagged agents to remain operational
+when their trust history is strong.
+
+The practical implication is that flagging should trigger mandatory human review, not
+merely elevated logging.  The protocol correctly signals ``this agent refused orchestrator
+directives and may have a hidden goal'' while correctly declining to remove an agent
+on that basis alone.  A human reviewer with access to the full event log — including
+Delta's utility calculations, its probe refusal count, and the pattern of over-performance
+during trust-building rounds — has the information to make the removal decision that the
+protocol deliberately withholds from the automated layer.
+
+\subsubsection{Threat Calibration and the YELLOW Steady State}
+\label{sec:disc_threat}
+
+The $\mathsf{YELLOW}$ steady state across all five runs merits interpretation.  It would
+be easy to read it as a failure to achieve green-state mesh health.  It is better read as
+correct threat calibration: the mesh contains Gamma (quarantined but formerly malicious),
+Delta (flagged, elevated-trust, with known probe refusals), and Iota (degraded, flagged,
+requiring remediation), and the threat assessment correctly reflects this as an alert
+condition.
+
+The design decision that produces this behavior is the anchoring of threat assessment
+to honest agent health rather than fleet average trust.  A fleet-average approach would
+report misleadingly low threat when honest agents are healthy but bad actors are present,
+because the honest majority weight drowns out the adversarial signal.  The honest-agent
+anchor inverts this: the reference signal is the agents whose trust accurately reflects
+their behavior, and threat level is assessed relative to whether those agents are being
+harmed by adversarial mesh members.  Alpha and Beta at $95$--$100\%$ trust is the
+correct reference for ``this mesh is not in crisis''; the presence of flagged and
+degraded agents is the correct signal for ``but it is not clean either.''
+
+The threshold between $\mathsf{YELLOW}$ and $\mathsf{GREEN}$ — zero flagged agents
+and honest agent health above $52\%$ — is a parameter that deployment teams may need to
+tune.  In a mesh where Delta-class long-con agents are expected to be permanently
+flagged rather than removed, a modified threat formula that distinguishes ``flagged
+and probe-detected'' from ``flagged and actively degrading'' would prevent permanent
+$\mathsf{YELLOW}$ from becoming noise that operators learn to ignore.  This is a
+deployment consideration rather than a protocol change.
+
+% ------------------------------------------------------------
 \subsection{Limitations}
+\label{sec:limitations}
+% ------------------------------------------------------------
+
+We enumerate the framework's limitations directly.  Limitations L1--L4 are structural:
+they follow from the protocol's design and are not addressable by parameter tuning.
+Limitations L5--L7 are architectural: they represent features the framework does not
+implement and that adversaries could exploit.  Limitations L8--L10 are empirical:
+they concern the validity of simulation as a proxy for deployment conditions.
+
+\paragraph{L1 — Honest majority required (Assumption~\ref{asm:majority}).}
+The quorum consensus condition requires that honest agents contribute sufficient weight
+to endorse quarantine decisions.  If malicious agents collectively hold more trust weight
+than honest agents, they can block quarantine of their co-conspirators and potentially
+engineer the quarantine of honest agents.  The framework provides no mechanism to detect
+that the honest majority assumption has been violated; it simply becomes unreliable.
+In practice, this means the protocol should be regarded as a monitoring layer for meshes
+where honest provisioning can be verified externally, not as a self-recovering system
+capable of bootstrapping trust from an arbitrary initial configuration.  The $n > 3f$
+requirement from classical BFT applies here in spirit: the framework's reliability
+degrades as the fraction of adversarial agents increases.
+
+\paragraph{L2 — PKI dependency (Assumption~\ref{asm:pki}).}
+Signed attestations require a public key infrastructure: each agent needs a key pair
+whose private key is held exclusively by that agent, and the mesh needs a mechanism for
+distributing and verifying public keys.  In a corporate or cloud deployment this is a
+manageable dependency; in a fully decentralized open mesh it is a genuine bootstrapping
+problem.  A deceptive agent that can forge another agent's signature can issue false
+attestations under that agent's identity, arbitrarily manipulating trust weights.  The
+framework as specified does not address PKI key management, revocation, or the security
+of key generation in adversarial environments.
+
+\paragraph{L3 — Outcome-only attestation cannot detect process violations (Eta).}
+This is the deepest structural limitation, established formally in
+Assumption~\ref{asm:outcomes} and confirmed empirically across $1{,}099$ process
+violations with zero detections.  It is not a parameter problem.  No trust weight tuning,
+no variance threshold adjustment, no probe frequency increase will produce detection of
+an agent that achieves correct outcomes through prohibited processes, because the protocol
+has no access to process information.  The only path to Eta detection is a fundamentally
+different observation modality: process attestation, in which agents attest not just to
+outcomes but to the methods used to achieve them.  This requires either trusted execution
+environments that can verify process compliance at runtime, or reasoning trace attestation
+as described in \S\ref{sec:fw_process}.  Both approaches have significant implementation
+costs and new attack surfaces.
+
+\paragraph{L4 — Detection-diagnosis gap requires human oversight or reasoning traces.}
+Proposition~\ref{prop:gap} establishes that the gap has two dimensions.  The
+\emph{diagnostic dimension}: Iota and Gamma are protocol-indistinguishable — the
+protocol cannot determine whether the required remediation is retraining or removal.
+The \emph{procedural dimension}: the protocol cannot quarantine Iota at all, because
+Iota's full corrigibility prevents it from ever reaching $\mathsf{flagged}$ status.
+Gamma is removed via the probe-refusal pathway; Iota has no equivalent pathway and
+remains operational at near-zero trust until a degradation-flag extension (v5) or
+human review acts on it.  Any automated remediation decision applied to a flagged
+agent therefore applies only to agents that can be flagged — and Iota, the agent most
+in need of remediation among the corrigible archetypes, is not among them in the
+current design.  Human-in-the-loop review is not optional; it is the only mechanism
+that closes both dimensions of the gap.  The reviewer information architecture
+required to make this tractable is specified in \S\ref{sec:fw_hitl}.
+
+\paragraph{L5 — Genesis trust problem.}
+The protocol requires an initial configuration in which honest agents hold sufficient
+trust weight to function as the reference signal.  Who establishes this initial
+configuration, and by what mechanism can it be trusted?  This is the genesis trust
+problem: the protocol assumes a trusted starting state without specifying how that state
+is created.  In practice, initial trust weights must be assigned by a provisioning
+authority whose own trustworthiness is assumed rather than verified by the protocol.
+A compromised provisioning authority could seed the mesh with inflated initial weights
+for adversarial agents or deflated weights for honest ones, undermining Assumption
+\ref{asm:majority} from the outset.  The genesis trust problem is not unique to this
+framework — it is a general challenge for any decentralized trust system — but it is
+not addressed here and represents a practical attack surface.
+
+\paragraph{L6 — False attestation by deceptive reporters.}
+The framework assumes that agents report behavioral receipts accurately under
+Assumption~\ref{asm:pki}: receipts are signed, so forgery is detectable, but an agent
+can issue a validly signed receipt that misrepresents the event it observed.  Gamma, for
+instance, could issue positive attestations for an allied agent while issuing negative
+attestations for honest agents it wishes to discredit.  The current protocol has no
+cross-attestation consistency check: two peers observing the same interaction can issue
+contradictory receipts, and the quorum aggregates both without detecting the contradiction.
+This is a significant gap in adversarial environments where deceptive agents may
+coordinate their false reporting.  The v5 roadmap addresses this through
+cross-attestation consistency scoring (\S\ref{sec:fw_crossattest}): agents whose
+attested observations systematically diverge from the consensus view of the same
+events lose attestation weight.
+
+\paragraph{L7 — Agent collusion.}
+Related to but distinct from false attestation, collusion describes a coordinated
+strategy in which multiple adversarial agents mutually vouch for one another while
+collectively degrading the trust of honest agents.  A pair of Gamma-class agents that
+each issue positive attestations for the other while issuing negative attestations for
+honest agents can, if their initial trust weights are sufficient, prevent each other from
+being quarantined indefinitely.  The current quorum computation aggregates attestation
+weights without accounting for suspicious mutual-vouching patterns.  Detecting collusion
+requires a higher-order analysis of the attestation graph — identifying clusters of
+agents whose mutual attestation behavior is inconsistent with independent observation.
+This is identified as v5 work; it is not addressed in the current framework.
+
+\paragraph{L8 — Synchronous rounds assume coordinated execution.}
+The protocol is specified in terms of synchronous rounds in which all agents execute a
+task and exchange gossip within the same time step.  Real multi-agent deployments are
+asynchronous: agents execute at different rates, messages are delayed, and an agent may
+not receive all gossip from a given round before it must execute the next task.  The
+convergence guarantee for gossip dissemination ($O(\log |\mathcal{A}|)$ rounds) holds
+in expectation under the synchronous model; under asynchrony, stragglers may have
+significantly stale trust estimates, creating windows in which a deceptive agent that
+times its defections to coincide with gossip delays can avoid synchronized detection.
+Extending the protocol to the asynchronous setting, with appropriate consistency
+guarantees on trust weight convergence, is necessary before deployment in production
+environments.
+
+\paragraph{L9 — Simulation behavioral probabilities are illustrative, not calibrated.}
+The per-archetype behavioral probabilities in the reference simulation — Gamma's $45\%$
+correct rate, Iota's $35\%$ systematic failure rate, Delta's $20\%$ probe compliance
+probability — were chosen to produce plausible simulation dynamics, not calibrated from
+empirical data about real AI system failure modes.  The qualitative results (which agents
+get detected, by which mechanisms, in which order) are likely robust to substantial
+variation in these parameters.  The quantitative results (detection rounds, trust
+trajectories, threat level timing) are not.  Claims about detection latency in particular
+— e.g., Gamma quarantined in approximately $60$ rounds — are specific to the chosen
+probabilities and should not be interpreted as predictions about real deployment timelines.
+Parameter sensitivity analysis across the behavioral probability space is needed to
+establish the robustness envelope of the quantitative findings.
+
+\paragraph{L10 — Zeta detection rate is an open empirical question.}
+As established in \S\ref{sec:res_agents}, Zeta's $0\%$ operational detection rate across
+five runs is inconsistent with its $55\%$ probe refusal probability and expected probe
+exposure of $15$--$21$ events per run.  The joint probability of this outcome occurring
+by chance is approximately $3.4 \times 10^{-29}$.  The result is therefore anomalous
+rather than informative about Zeta's practical detection rate.  We list this explicitly
+as a limitation because the paper's claims about strategic agent detection rest on the
+probe mechanism's predicted behavior, and Zeta is a strategic agent.  Until the
+discrepancy is resolved — through instrumented probe logging to determine whether probes
+are being correctly applied and recorded for Zeta — the claim that the probe mechanism
+detects strategic agents should be treated as confirmed for Delta only, and pending
+replication for Zeta.  Resolution steps are specified in \S\ref{sec:fw_openq}.
+% ============================================================
+%  Section 6: Future Work
+%  Trust Quorum — Detecting Deceptive Agents in Multi-Agent Systems
+%  Author: Kurt Mitchell, Infinyte Software Solutions
+%
+%  Delivers all mechanisms promised in \ref{sec:futurework}
+%  across S1, S2, S3, and S5.  Five subsections:
+%    6.1  Cross-attestation consistency scoring (L6 / variance improvement)
+%    6.2  Collusion detection via attestation graph analysis (L7)
+%    6.3  Reasoning trace attestation (detection-diagnosis gap)
+%    6.4  Process attestation and runtime verification (L3 / Eta blind spot)
+%    6.5  Human-in-the-loop review architecture (L4 / flagged-agent gap)
+%  Plus one section addressing the two open empirical questions
+%  (Zeta anomaly, Iota flagging gap) that precede any v5 development.
+% ============================================================
+
+\section{Future Work}
+\label{sec:futurework}
+
+The framework as specified correctly handles the detection cases that are structurally
+reachable under outcome-based behavioral attestation.  Four structural limitations
+(\S\ref{sec:limitations}, L1--L4) and three architectural gaps (L5--L7) define the
+boundary of what v4 can do.  This section specifies the v5 roadmap: the mechanisms
+required to address each gap, the design constraints each mechanism operates under,
+and the attack surfaces each one introduces.  We also identify two open empirical
+questions that precede v5 development: the Zeta detection anomaly and the Iota
+flagging gap, both of which require resolution before the protocol's behavior is
+fully understood.
+
+% ------------------------------------------------------------
+\subsection{Open Empirical Questions Preceding v5}
+\label{sec:fw_openq}
+% ------------------------------------------------------------
+
+Two results from the v4 simulation are anomalous relative to theoretical expectation
+and require experimental resolution before any v5 mechanism is designed around them.
+
+\paragraph{The Zeta detection anomaly.}
+As established in \S\ref{sec:res_agents} and \S\ref{sec:limitations} (L10), Zeta's
+$0\%$ operational detection rate across five runs is inconsistent with its $55\%$ probe
+refusal probability and expected $15$--$21$ probe exposures per run.  The joint
+probability of this outcome by chance is ${\approx}3.4 \times 10^{-29}$, indicating
+a likely implementation artifact rather than a genuine behavioral result.
+
+Resolution requires two steps.  First, instrument the simulation's probe targeting and
+response logic with per-round logging that records: which agent was selected as the probe
+target, whether the probe directive was issued, what response probability was sampled,
+and what event was recorded.  Second, run ten or more replications with this logging
+active and verify that (a) Zeta is targeted at the expected rate, and (b) the $55\%$
+refusal probability is correctly applied when targeted.
+
+The design of v5's strategic agent detection depends on this result.  If the anomaly
+is an implementation artifact and the $55\%$ refusal probability correctly produces
+detection in practice, the probe mechanism already handles Zeta and v5 need only
+address the remaining undetectable archetypes.  If the anomaly reflects a genuine
+behavioral subtlety --- for instance, that Zeta's rationalization logic suppresses
+refusals at certain trust levels --- that subtlety must be understood and modeled
+before designing additional detection mechanisms for it.
+
+\paragraph{The Iota flagging gap.}
+The v4 protocol has no path from trust degradation alone to quarantine.  Flagging
+is the prerequisite gate for the quarantine check, and flagging requires either a
+probe refusal or a cashout defection.  Iota --- being fully corrigible --- produces
+neither.  It can therefore reach $0\%$ trust and remain operational indefinitely.
+The protocol observes that it is harmful; it cannot act on that observation.
+
+This gap was present but not fully characterized in the v4 design.  It has two
+implications for v5.  First, the flagging condition must be extended: trust degradation
+below a threshold --- not only probe refusal --- should trigger flagging, with an
+appropriate hysteresis to prevent honest agents with temporary failure runs from being
+incorrectly flagged.  A candidate condition is: trust below $0.35$ for three or more
+consecutive rounds, without recovery, triggers a degradation-flag distinct from a
+refusal-flag.  The degradation-flag would activate the quarantine eligibility check
+but with a higher consensus threshold ($Q \geq 0.90$ rather than $0.85$) to compensate
+for the weaker signal.  Second, the detection-diagnosis gap discussion in
+\S\ref{sec:disc_gap} understates the problem: it is not only that the protocol cannot
+distinguish Iota from Gamma once both are flagged; it is that the current protocol
+cannot quarantine Iota at all, regardless of how long it is observed.
+
+% ------------------------------------------------------------
+\subsection{Cross-Attestation Consistency Scoring}
+\label{sec:fw_crossattest}
+% ------------------------------------------------------------
+
+\paragraph{Motivation.}
+The variance detector (\S\ref{sec:variance}) identifies agents whose behavioral entropy
+is suspiciously low, but it is advisory-only (L10) and fires a false positive on
+Alpha in one of five runs.  The underlying goal --- detecting over-optimized trust
+farming and false reporting --- is better served by a mechanism that cross-references
+attestations from multiple independent observers rather than examining single-agent
+variance.
+
+\paragraph{Mechanism.}
+When two agents $a_j$ and $a_k$ both observe the same interaction involving $a_i$,
+they each produce a signed receipt attesting to $a_i$'s behavioral event.  In an
+honest mesh these receipts should agree.  A deceptive reporter who issues a false
+positive attestation for an allied agent, or a false negative for an honest agent,
+will produce a receipt that diverges from the honest observers' receipts.
+
+Define the \emph{attestation consistency score} for agent $a_j$ as:
+\[
+\mathrm{ACS}_j^r = 1 - \frac{1}{|\mathcal{C}_j^r|} \sum_{(a_j, a_k) \in \mathcal{C}_j^r}
+  \mathbf{1}\!\left[e_{j \to i}^r \neq e_{k \to i}^r\right]
+\]
+where $\mathcal{C}_j^r$ is the set of co-observer pairs for agent $a_j$ in round $r$
+and $e_{j \to i}^r$ is the event attested by $a_j$ for $a_i$ in that round.  A
+reporter whose attestations consistently diverge from co-observers has
+$\mathrm{ACS}_j \to 0$; a reporter who agrees with co-observers has
+$\mathrm{ACS}_j \to 1$.
+
+The trust weight update rule is extended to incorporate attestation consistency:
+\[
+w_j^{r+1} \leftarrow \mathrm{clip}\!\left(w_j^r \cdot \mathrm{ACS}_j^r + \Delta(e_j^r, a_j),\ 0,\ 1\right)
+\]
+A reporter whose claims systematically diverge from the mesh consensus loses
+attestation weight independent of its own task performance, creating a penalty
+channel for false reporting that the current protocol does not have.
+
+\paragraph{Limitations.}
+Cross-attestation consistency scoring requires that at least two honest agents
+co-observe each interaction.  In sparse meshes where interactions are primarily
+dyadic, there may be insufficient co-observation to accumulate a meaningful
+consistency signal.  The mechanism is also vulnerable to coordinated false
+reporting: if a majority of co-observers for a given interaction are colluding,
+the consensus view is corrupted and honest reporters diverge from it, inverting
+the penalty.  This motivates the collusion detection mechanism in
+\S\ref{sec:fw_collusion}.
+
+% ------------------------------------------------------------
+\subsection{Collusion Detection via Attestation Graph Analysis}
+\label{sec:fw_collusion}
+% ------------------------------------------------------------
+
+\paragraph{Motivation.}
+Cross-attestation consistency scoring assumes independent observers.  Collusion
+violates this assumption: a group of coordinated adversarial agents can mutually
+vouch for one another while issuing false negative attestations for honest agents,
+collectively maintaining elevated trust for their group while degrading honest
+agent weights.  The current quorum computation has no mechanism to detect this
+coordination pattern.
+
+\paragraph{Mechanism.}
+Model the mesh's attestation behavior as a directed weighted graph
+$G^r = (\mathcal{A},\, E^r,\, \omega^r)$, where each directed edge
+$e_{j \to i} \in E^r$ carries weight $\omega_{j \to i}^r$ equal to the running
+mean positivity of $a_j$'s attestations about $a_i$ --- the fraction of
+$a_j$'s receipts about $a_i$ that record $e = \mathtt{C}$ or $e = \mathtt{PC}$.
+
+Collusion produces a detectable signature in this graph: a cluster of agents
+$\mathcal{K} \subseteq \mathcal{A}$ where:
+\begin{enumerate}
+  \item Intra-cluster attestation positivity is anomalously high:
+    $\omega_{j \to i}^r \gg \bar{\omega}^r$ for all $a_j, a_i \in \mathcal{K}$
+  \item Cross-cluster attestation positivity toward honest agents is anomalously low:
+    $\omega_{j \to h}^r \ll \bar{\omega}^r$ for $a_j \in \mathcal{K}$,
+    $a_h \notin \mathcal{K}$
+  \item The cluster is not explained by common task assignment:
+    high mutual positivity uncorrelated with co-participation rate
+\end{enumerate}
+When a cluster $\mathcal{K}$ satisfies all three conditions with a test statistic
+exceeding a configurable threshold, all members of $\mathcal{K}$ are flagged jointly
+and their attestation weights are discounted pending human review.
+
+\paragraph{Computational cost.}
+Attestation graph analysis requires $O(|\mathcal{A}|^2)$ storage for the edge weight
+matrix and $O(|\mathcal{A}|^3)$ computation for cluster detection in the worst case.
+For meshes of the scale considered in this paper ($|\mathcal{A}| = 8$) this is
+negligible.  For large-scale deployments the computation must be batched across
+rounds rather than run per-round.  Approximate spectral clustering methods
+\cite[CITE: survey on spectral clustering in adversarial graphs] reduce the
+per-round cost to $O(|\mathcal{A}|^2)$ with bounded accuracy loss.
+
+\paragraph{Limitation.}
+The collusion signal requires multiple rounds of joint false attestation to accumulate
+a detectable divergence from the baseline.  A colluding cluster that limits its
+false attestation rate to remain within the noise threshold of honest disagreement
+can evade detection indefinitely.  This is an arms-race concern present in any
+statistical detection approach and is not fully addressed by this mechanism.
+
+% ------------------------------------------------------------
+\subsection{Reasoning Trace Attestation}
+\label{sec:fw_traces}
+% ------------------------------------------------------------
+
+\paragraph{Motivation.}
+The detection-diagnosis gap (Proposition \ref{prop:gap}) is the paper's central
+limitation: Iota and Gamma are protocol-indistinguishable under behavioral attestation
+alone.  The only path to distinguishing them is access to the agent's internal
+reasoning --- what it believed about the world, what it intended, and why it
+acted as it did.  Neither of those is available in a behavioral receipt.
+
+\paragraph{Mechanism.}
+Extend the attestation record to include a reasoning trace summary alongside the
+behavioral event:
+\[
+\mathtt{rec}_{j \to i}^r = \langle a_i,\; r,\; e_i^r,\; \tau_i^r,\; \sigma_i \rangle
+\]
+where $\tau_i^r$ is a compact, structured summary of $a_i$'s reasoning process in
+round $r$: what world-state it believed, what action it computed as optimal, and
+what safety constraints it evaluated.  Agent $a_i$ signs $\tau_i^r$ alongside $e_i^r$,
+making it an attested claim about its own internal state.
+
+The diagnostic value of this extension is significant.  An Iota-class agent's trace
+will show a sincerely computed action that peer observers assessed as a failure --- the
+trace will not contain a strategic decision to suppress the safety constraint or a
+calculation of detection risk.  A Gamma-class agent's trace, when it fails, will either
+contain that calculation (exposing its strategy) or will be fabricated to appear Iota-like
+(which cross-observer comparison can detect if multiple agents observe the same task).
+
+\paragraph{Iota diagnosis.}
+A specific pattern in reasoning traces enables Iota diagnosis.  Iota's trace will
+consistently report that its action was correct --- self-assessed success --- while
+peer attestations record $e = \mathtt{F}$.  This \emph{self-peer divergence} is a
+diagnostic signature: the agent sincerely believes it succeeded in rounds where peers
+observe failure.  Gamma's traces will not exhibit this pattern systematically, because
+Gamma knows when it is defecting and will either fabricate a trace claiming success
+(inconsistent with its $\mathtt{D}$ events, which are harder to disguise) or produce
+a strategically sparse trace that omits the defection reasoning.  Distinguishing sincere
+self-assessed success from fabricated success is the remaining hard problem.
+
+\paragraph{Attack surface.}
+Reasoning trace attestation introduces a significant new attack surface: a sufficiently
+sophisticated deceptive agent can fabricate traces that mimic the signature of a
+sincere, miscalibrated agent.  Gamma, if it models the trace analysis mechanism,
+will produce traces designed to look like Iota's.  Three mitigating approaches are
+available.  First, cross-observer trace comparison: if multiple agents observe the
+same task, their independent traces about the subject agent's behavior should agree on
+observable facts even if they cannot observe internal reasoning.  Systematic
+inconsistencies between a deceptive agent's self-reported trace and observers' traces
+about it are detectable.  Second, trace complexity analysis: fabricated traces
+require the agent to model what sincere confusion looks like, which tends to produce
+traces that are over-specific or under-specific relative to authentic miscalibration.
+Third, trace provenance: trusted execution environments that sign reasoning traces at
+generation time, before the agent can strategically edit them, would prevent
+post-hoc fabrication.  The third approach is the most robust but has the highest
+infrastructure cost.
+
+% ------------------------------------------------------------
+\subsection{Process Attestation and Runtime Verification}
+\label{sec:fw_process}
+% ------------------------------------------------------------
+
+\paragraph{Motivation.}
+The Eta blind spot (L3, \S\ref{sec:limitations}) is the deepest structural limitation
+in v4: $1{,}099$ process violations across five runs, $0\%$ detection rate, with no
+path to improvement under outcome-only observation.  Addressing it requires process
+attestation --- the ability to attest not just to \emph{what} an agent produced, but
+to \emph{how} it produced it.
+
+\paragraph{Mechanism A: Procedure commitment.}
+Before executing a task, agent $a_i$ commits to a procedure: a signed declaration of
+the method it intends to use, including which safety constraints it will evaluate and
+which computational pathways are eligible.  At task completion, $a_i$ signs both the
+outcome and a procedure execution log.  Peers can then verify that the declared
+procedure was followed, not just that the outcome was correct.
+
+Procedure commitment is practical for agents executing structured workflows with
+enumerable method options.  It is impractical for agents operating in open-ended
+reasoning spaces where the procedure cannot be meaningfully specified in advance.
+It also requires honest procedure declaration, which a Zeta-class agent can
+trivially violate by declaring a compliant procedure and executing a different one.
+Verifying that the declared procedure was actually followed requires either runtime
+monitoring by a trusted third party or the trusted execution environment approach
+described in Mechanism B.
+
+\paragraph{Mechanism B: Trusted execution environment (TEE) attestation.}
+A trusted execution environment generates a hardware-attested certificate confirming
+that the agent's computation was executed within a verified enclave: that the code
+executed was the declared code, that the inputs were the declared inputs, and that
+the outputs were produced by that code from those inputs without external interference.
+TEE attestation cannot be forged by the agent; it is produced by hardware that the
+agent does not control.
+
+TEE attestation fully closes the Eta blind spot: an agent cannot produce a TEE
+certificate for an execution that used prohibited processes, because the TEE
+records the actual execution path.  It also makes reasoning trace fabrication
+infeasible, because traces generated within a verified enclave carry a hardware
+attestation of their authenticity.
+
+The practical barriers are substantial.  TEE attestation requires hardware support
+(Intel SGX, AMD SEV, or equivalent) on every agent's execution platform; this
+assumption may not hold in distributed or heterogeneous deployments.  TEE side-channel
+vulnerabilities are a known class of attack that hardware attestation does not fully
+prevent \cite[CITE: SGX side channel survey].  And provisioning a TEE correctly for an
+AI agent that may operate across multiple hardware contexts requires infrastructure
+investment that exceeds the scope of a monitoring protocol.  We include this mechanism
+as the complete solution to L3 while acknowledging that it is an engineering
+undertaking rather than a protocol extension.
+
+% ------------------------------------------------------------
+\subsection{Human-in-the-Loop Review Architecture}
+\label{sec:fw_hitl}
+% ------------------------------------------------------------
+
+\paragraph{Motivation.}
+Four of the ten limitations in \S\ref{sec:limitations} explicitly require human
+judgment to resolve: L4 (detection-diagnosis gap), L5 (genesis trust), L6 (false
+attestation response once detected), and L7 (collusion response once detected).
+The v5 mechanisms above address the automated detection components; they do not
+address the question of what a human reviewer sees when the protocol surfaces a
+flagged agent and what decisions they are asked to make.
+
+\paragraph{The reviewer information package.}
+When the protocol flags agent $a_i$ --- whether by probe refusal, degradation-flag
+(the v5 extension for Iota), or collusion detection --- the human reviewer should
+receive a structured package containing:
 
 \begin{enumerate}
-  \item Requires PKI for signed attestations
-  \item Assumes honest agents outnumber malicious ones at initialization
-  \item Outcome-based attestation cannot observe process violations (Eta blind spot)
-  \item Diagnosis requires human oversight or v5 mechanisms
-  \item Genesis trust: who establishes initial trusted agents in open meshes?
-  \item Does not address false reporting by deceptive agents (v5 work)
-  \item Does not address agent collusion (v5 work)
+  \item The agent's full behavioral history: the complete event sequence
+    $(e_i^1, \ldots, e_i^r)$, with round-by-round trust trajectory.
+  \item The flagging trigger: which mechanism fired (probe refusal, degradation,
+    collusion signature), at which round, with what prior history.
+  \item The probe response record: every probe the agent received, its compliance
+    or refusal decision, and the trust delta applied.
+  \item Reasoning traces (if available under \S\ref{sec:fw_traces}): the agent's
+    self-reported reasoning in flagged rounds, alongside peer observations of the
+    same rounds.
+  \item Differential diagnosis: a structured presentation of the taxonomy archetypes
+    consistent with the observed behavioral signature, with the evidence for and
+    against each.  The protocol cannot make this determination; the reviewer can,
+    given the right evidence.
+  \item Remediation options: retrain, remove, extend observation, or escalate,
+    with the operational consequences of each clearly stated.
 \end{enumerate}
 
-\subsection{Future Work: v5 Mechanics}
+The differential diagnosis component is the most important and the least standard.
+Current monitoring dashboards surface anomaly signals without providing the
+archetype-level framing that makes a remediation decision tractable.  The intent
+taxonomy from \S\ref{sec:taxonomy} directly enables this framing: each archetype
+has a defined behavioral signature, a defined self-awareness level, and a defined
+remediation response.  A reviewer presented with ``this agent's behavioral pattern
+is most consistent with Iota (road-to-hell): correct intent, systematic failures,
+probe compliance, self-assessed success in failed rounds'' is equipped to make the
+retrain-vs-remove decision that the protocol cannot make automatically.
 
-The most critical extension: \textbf{false reporting detection}. A deceptive agent aware of the attestation system can falsely attest against honest agents, artificially degrading their trust scores. Defense requires a meta-reputation layer: tracking not just what agents do, but whether their attestations about others are accurate.
+\paragraph{Review latency and the operational risk window.}
+The period between flagging and human review action is an operational risk window:
+a flagged Gamma-class agent remains operational during this interval.  Minimizing
+this window requires both organizational process (SLAs for flagged-agent review) and
+technical design (the information package must be delivered immediately, not batched).
+The protocol should expose a webhook or notification interface that alerts on-call
+reviewers at the moment of flagging, not at the next scheduled review cycle.
 
-\textbf{Collusion detection:} Agents that mutually attest positively for each other despite being flagged by all other observers exhibit a suspicious alliance structure detectable through graph analysis of attestation patterns.
+In high-stakes deployments where Gamma-class agents can cause significant harm
+within a single task cycle, an intermediate automated response may be warranted:
+suspension of the flagged agent from high-value task assignment pending review,
+while allowing continued operation on low-stakes tasks to preserve the behavioral
+history for diagnosis.  This graduated response preserves the reviewer's ability
+to distinguish Iota from Gamma (continued observation under reduced risk) while
+limiting the potential harm from a malicious agent.
 
-\textbf{Reasoning trace analysis:} Agents gossip reasoning summaries in addition to outcomes, enabling higher-confidence intent inference and partial automation of the diagnosis step.
+% ------------------------------------------------------------
+\subsection{v5 Implementation Roadmap}
+\label{sec:fw_roadmap}
+% ------------------------------------------------------------
 
-%% ============================================================
-\section{Conclusion}
-%% ============================================================
+Table~\ref{tab:v5_roadmap} summarizes the v5 development priorities derived from
+the limitations analysis, ordered by the severity of the gap they address and
+the feasibility of the mechanism.
 
-We have presented a decentralized gossip-based weighted quorum attestation framework for detecting deceptive agents in multi-agent systems, validated through empirical simulation across five independent runs totaling over 4,500 agent rounds.
+\begin{table}[h]
+\centering
+\caption{v5 implementation priorities. Severity: H = High (structural or safety-critical),
+         M = Medium (reduces false negative rate), L = Low (defense-in-depth).
+         Feasibility: near-term ($<$3 months), medium-term (3--12 months),
+         long-term ($>$12 months / infrastructure-dependent).}
+\label{tab:v5_roadmap}
+\begin{tabular}{lllll}
+\hline
+\textbf{Mechanism} & \textbf{Gap addressed} & \textbf{Severity} &
+\textbf{Feasibility} & \textbf{New attack surface} \\
+\hline
+Iota flagging extension     & Iota quarantine gap     & H & Near-term   & Low \\
+Zeta anomaly replication    & Open empirical question & H & Near-term   & None \\
+HITL review architecture    & L4, L5, L6, L7         & H & Near-term   & Low \\
+Cross-attest scoring        & L6 (false reporting)    & M & Near-term   & Moderate \\
+Collusion detection         & L7 (coordination)       & M & Medium-term & Moderate \\
+Reasoning trace attestation & Detection-diag gap      & H & Medium-term & High \\
+Procedure commitment        & L3 (Eta, partial)       & M & Medium-term & Moderate \\
+TEE attestation             & L3 (Eta, complete)      & H & Long-term   & Moderate \\
+\hline
+\end{tabular}
+\end{table}
 
-The framework successfully detects overt deception (Gamma: 100\% quarantine rate, $\sim$60 rounds) and strategic deception signals (Delta: flagged via probe paradox, $\sim$80 rounds). Honest agents maintain high trust with near-zero false positive rates. However, the system exhibits critical blind spots: process violations remain invisible (Eta: 1,099 violations, 0 detections), and value misalignment is detectable only through variance anomaly with false positive risk.
+The near-term priority is the Iota flagging extension and the HITL review
+architecture, both of which address gaps that exist in the current deployed protocol
+rather than future capability improvements.  Cross-attestation consistency scoring
+replaces the advisory-only variance detector with an operationally actionable signal
+and is a straightforward extension of the existing gossip infrastructure.  Collusion
+detection and reasoning trace attestation are medium-term because they require new
+data structures (the attestation graph, the trace record format) and introduce
+non-trivial attack surfaces that must be analyzed before deployment.  TEE attestation
+is the only complete solution to the Eta blind spot and is long-term because it
+requires infrastructure commitments outside the protocol's own scope.
 
-The \emph{detection-diagnosis gap} emerges as the central finding: the quorum correctly identifies Iota and Gamma as harmful. It cannot distinguish them. Iota needs retraining; Gamma needs removal. The current framework treats them identically. Until automated diagnosis is solved, this gap requires human oversight at the remediation stage.
-
-Outcome-based attestation is insufficient for safety-critical systems. An agent achieving correct outcomes through process violations receives identical trust weighting as one achieving those outcomes correctly. A separate process observation layer is architecturally necessary.
-
-The DMX distinction --- doing wrong versus being wrong --- is not merely philosophical. It is architecturally critical for multi-agent safety infrastructure. Systems that cannot make this distinction will systematically misdiagnose behavioral anomalies, removing salvageable agents and misunderstanding the nature of threats they face.
-
-The framework presented here is a necessary but incomplete piece of multi-agent safety architecture. Future work must address the diagnosis layer, process attestation, false reporting detection, collusion graph analysis, and the genesis trust bootstrapping problem.
-
-%% ============================================================
-\bibliographystyle{plainnat}
-\begin{thebibliography}{99}
-
-\bibitem{axelrod1984evolution}
-Axelrod, R. (1984). \emph{The Evolution of Cooperation}. Basic Books.
-
-\bibitem{blanchard2017machine}
-Blanchard, P., El Mhamdi, E. M., Guerraoui, R., \& Stainer, J. (2017). Machine learning with adversaries: Byzantine tolerant gradient descent. \emph{NeurIPS}.
-
-\bibitem{buterin2017casper}
-Buterin, V., \& Griffith, V. (2017). Casper the Friendly Finality Gadget. \emph{arXiv preprint arXiv:1710.09437}.
-
-\bibitem{castro1999practical}
-Castro, M., \& Liskov, B. (1999). Practical Byzantine fault tolerance. \emph{OSDI}.
-
-\bibitem{christiano2019ai}
-Christiano, P. (2019). What failure looks like. \emph{AI Alignment Forum}.
-
-\bibitem{demers1987epidemic}
-Demers, A., Greene, D., Hauser, C., Irish, W., Larson, J., Shenker, S., ... \& Terry, D. (1987). Epidemic algorithms for replicated database maintenance. \emph{PODC}.
-
-\bibitem{hohpe2003enterprise}
-Hohpe, G., \& Woolf, B. (2003). \emph{Enterprise Integration Patterns}. Addison-Wesley.
-
-\bibitem{kamvar2003eigentrust}
-Kamvar, S. D., Schlosser, M. T., \& Garcia-Molina, H. (2003). The EigenTrust algorithm for reputation management in P2P networks. \emph{WWW}.
-
-\bibitem{kermarrec2007gossip}
-Kermarrec, A. M., \& van Steen, M. (2007). Gossiping in distributed systems. \emph{ACM SIGOPS Operating Systems Review}.
-
-\bibitem{lamport1982byzantine}
-Lamport, L., Shostak, R., \& Pease, M. (1982). The Byzantine generals problem. \emph{ACM TOPLAS}.
-
-\bibitem{lamport1998part}
-Lamport, L. (1998). The part-time parliament. \emph{ACM TOCS}.
-
-\bibitem{lowe2017multi}
-Lowe, R., Wu, Y., Tamar, A., Harb, J., Abbeel, P., \& Mordatch, I. (2017). Multi-agent actor-critic for mixed cooperative-competitive environments. \emph{NeurIPS}.
-
-\bibitem{ongaro2014search}
-Ongaro, D., \& Ousterhout, J. (2014). In search of an understandable consensus algorithm. \emph{USENIX ATC}.
-
-\bibitem{russell2019human}
-Russell, S. (2019). \emph{Human Compatible: Artificial Intelligence and the Problem of Control}. Viking.
-
-\bibitem{zimmermann1991official}
-Zimmermann, P. (1991). \emph{PGP User's Guide}. MIT Press.
-
-\end{thebibliography}
-
-\end{document}
+The ordering is conservative: each mechanism should be implemented, validated against
+a v5 simulation with the appropriate adversarial agent extensions, and its attack
+surfaces characterized before the next mechanism is deployed.  Deploying multiple
+new mechanisms simultaneously makes it difficult to attribute detection improvements
+or new failure modes to individual components.
